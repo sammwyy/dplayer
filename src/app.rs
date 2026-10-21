@@ -33,7 +33,6 @@ pub fn run(paths: Vec<PathBuf>) {
                 options.clone(),
                 Color::rgba(0, 0, 0, 0),
                 move |handle| {
-                    crate::views::chrome::request_hybrid(&handle);
                     let activity = keys.clone();
                     handle.on_pointer_moved(move |p| activity.poke_pointer((p.x, p.y)));
                     let presence = keys.clone();
@@ -86,7 +85,6 @@ pub fn show_settings() {
                 options,
                 Color::rgba(0, 0, 0, 0),
                 move |handle| {
-                    crate::views::chrome::request_hybrid(&handle);
                     let closer = handle.clone();
                     handle.on_keyboard_input(move |event, _| {
                         let escape = event.pressed && event.key == Key::Escape;
@@ -120,7 +118,15 @@ pub fn open_settings() {
 
 /// The system theme with the user's accent preference applied.
 pub(crate) fn load_theme() -> Theme {
-    Config::load().appearance.accent.apply(load_system_theme())
+    theme_for(None)
+}
+
+/// Like [`load_theme`], with `media` as the automatic accent.
+pub(crate) fn theme_for(media: Option<Color>) -> Theme {
+    Config::load()
+        .appearance
+        .accent
+        .apply(load_system_theme(), media)
 }
 
 pub(crate) fn load_system_theme() -> Theme {

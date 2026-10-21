@@ -17,8 +17,6 @@ pub struct MediaInfo {
     /// Display dimensions after applying stream rotation metadata.
     pub width: u32,
     pub height: u32,
-    pub video_codec: String,
-    pub audio_codec: String,
 }
 
 impl MediaInfo {
@@ -40,7 +38,6 @@ struct Probe {
 #[derive(Deserialize)]
 struct Stream {
     codec_type: Option<String>,
-    codec_name: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
     duration: Option<String>,
@@ -106,12 +103,14 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
     let probe: Probe = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("could not parse ffprobe output: {e}"))?;
 
-    let video = probe.streams.iter().find(|s| {
-        s.codec_type.as_deref() == Some("video") && s.disposition.attached_pic == 0
-    });
-    let picture = probe.streams.iter().find(|s| {
-        s.codec_type.as_deref() == Some("video") && s.disposition.attached_pic != 0
-    });
+    let video = probe
+        .streams
+        .iter()
+        .find(|s| s.codec_type.as_deref() == Some("video") && s.disposition.attached_pic == 0);
+    let picture = probe
+        .streams
+        .iter()
+        .find(|s| s.codec_type.as_deref() == Some("video") && s.disposition.attached_pic != 0);
     let audio = probe
         .streams
         .iter()
@@ -159,18 +158,14 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         artist: format_tags
             .and_then(|t| tag(t, "artist").or_else(|| tag(t, "album_artist")))
             .map(str::to_string),
-        album: format_tags.and_then(|t| tag(t, "album")).map(str::to_string),
+        album: format_tags
+            .and_then(|t| tag(t, "album"))
+            .map(str::to_string),
         duration,
         has_video: video.is_some(),
         has_audio: audio.is_some(),
         attached_picture: picture.is_some(),
         width,
         height,
-        video_codec: video
-            .and_then(|v| v.codec_name.clone())
-            .unwrap_or_default(),
-        audio_codec: audio
-            .and_then(|a| a.codec_name.clone())
-            .unwrap_or_default(),
     })
 }

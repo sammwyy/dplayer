@@ -38,8 +38,6 @@ pub struct InterfaceConfig {
     pub animations: bool,
     pub controls_width: ControlsWidth,
     pub time_display: TimeDisplay,
-    /// Show file format details below the title in the controls.
-    pub show_details: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -118,7 +116,9 @@ pub enum BarStyle {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Accent {
+    /// Follows the dominant color of the cover art or video.
     #[default]
+    Auto,
     System,
     Blue,
     Purple,
@@ -130,7 +130,8 @@ pub enum Accent {
 }
 
 impl Accent {
-    pub const ALL: [Accent; 8] = [
+    pub const ALL: [Accent; 9] = [
+        Self::Auto,
         Self::System,
         Self::Blue,
         Self::Purple,
@@ -143,7 +144,7 @@ impl Accent {
 
     pub fn color(self) -> Option<Color> {
         Some(match self {
-            Self::System => return None,
+            Self::Auto | Self::System => return None,
             Self::Blue => Color::rgb(59, 130, 246),
             Self::Purple => Color::rgb(139, 92, 246),
             Self::Pink => Color::rgb(236, 72, 153),
@@ -156,6 +157,7 @@ impl Accent {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Auto => "Auto",
             Self::System => "System",
             Self::Blue => "Blue",
             Self::Purple => "Purple",
@@ -168,13 +170,22 @@ impl Accent {
     }
 
     /// Replaces the system accent while keeping the rest of the palette.
-    pub fn apply(self, mut theme: Theme) -> Theme {
-        if let Some(accent) = self.color() {
-            theme.colors.accent = accent;
-            theme.colors.selection_background = theme.colors.surface.mix(accent, 0.22);
+    /// `media` is the color picked from the current artwork, used by `Auto`.
+    pub fn apply(self, theme: Theme, media: Option<Color>) -> Theme {
+        match self
+            .color()
+            .or(if self == Self::Auto { media } else { None })
+        {
+            Some(accent) => with_accent(theme, accent),
+            None => theme,
         }
-        theme
     }
+}
+
+fn with_accent(mut theme: Theme, accent: Color) -> Theme {
+    theme.colors.accent = accent;
+    theme.colors.selection_background = theme.colors.surface.mix(accent, 0.22);
+    theme
 }
 
 impl Default for PlaybackConfig {
@@ -198,7 +209,6 @@ impl Default for InterfaceConfig {
             animations: true,
             controls_width: ControlsWidth::Default,
             time_display: TimeDisplay::Total,
-            show_details: true,
         }
     }
 }
@@ -206,7 +216,7 @@ impl Default for InterfaceConfig {
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            accent: Accent::System,
+            accent: Accent::Auto,
             audio_background: AudioBackground::Blurred,
             cover_shape: CoverShape::Rounded,
             bar_style: BarStyle::Floating,

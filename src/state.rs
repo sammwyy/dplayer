@@ -1,9 +1,10 @@
-use crate::config::{Config, RepeatMode};
+use crate::config::{Accent, Config, RepeatMode};
 use crate::engine::{self, Engine, EngineEvent, MediaInfo};
 use crate::icons::Icons;
 use creamui_image::ImageData;
 use creamui_reactive::Signal;
 use creamui_render::{AppHandle, WindowHandle};
+use creamui_theme::Color;
 use creamui_widgets::ScrollController;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -43,7 +44,6 @@ pub struct PlayerState {
     pub app: AppHandle,
     pub icons: Icons,
     pub window: Rc<RefCell<Option<WindowHandle>>>,
-    pub maximized: Signal<bool>,
 
     pub queue: Signal<Vec<QueueItem>>,
     pub current: Signal<Option<usize>>,
@@ -65,6 +65,9 @@ pub struct PlayerState {
     pub cover: Signal<Option<ImageData>>,
     /// Small, pre-blurred copy of the cover art used as the audio backdrop.
     pub backdrop: Signal<Option<ImageData>>,
+    /// Accent picked from the cover art or the video, for `Accent::Auto`.
+    media_accent: Rc<Cell<Option<Color>>>,
+    video_frames: Rc<Cell<u32>>,
     pub queue_scroll: ScrollController,
     pub config: Signal<Config>,
     /// Chrome slide progress: 0.0 fully hidden, 1.0 fully shown.
@@ -93,7 +96,6 @@ impl PlayerState {
             app,
             icons: Icons::load(),
             window: Rc::new(RefCell::new(None)),
-            maximized: Signal::new(false),
             queue: Signal::new(Vec::new()),
             current: Signal::new(None),
             media: Signal::new(None),
@@ -115,6 +117,8 @@ impl PlayerState {
             frame: Signal::new(None),
             cover: Signal::new(None),
             backdrop: Signal::new(None),
+            media_accent: Rc::new(Cell::new(None)),
+            video_frames: Rc::new(Cell::new(0)),
             queue_scroll: ScrollController::new(0.0),
             config: Signal::new(config),
             chrome_progress: Signal::new(1.0),
@@ -174,8 +178,14 @@ impl PlayerState {
             || std::thread::sleep(Duration::from_millis(16)),
             move |_| {
                 let now = Instant::now();
-                let dt = now.duration_since(state.chrome_last.replace(now)).as_secs_f32();
-                let target = if state.controls_visible.peek() { 1.0 } else { 0.0 };
+                let dt = now
+                    .duration_since(state.chrome_last.replace(now))
+                    .as_secs_f32();
+                let target = if state.controls_visible.peek() {
+                    1.0
+                } else {
+                    0.0
+                };
                 let current = state.chrome_progress.peek();
                 let step = dt / CHROME_TRANSITION;
                 let next = if target > current {
@@ -204,8 +214,32 @@ impl PlayerState {
         let accent_changed = config.appearance.accent != self.config.peek().appearance.accent;
         self.config.set(config);
         if accent_changed {
-            if let Some(window) = self.window.borrow().as_ref() {
-                window.set_theme(crate::app::load_theme());
+            self.apply_theme();
+        }
+    }
+
+    fn apply_theme(&self) {
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.set_theme(crate::app::theme_for(self.media_accent.get()));
+        }
+    }
+
+    fn set_media_accent(&self, accent: Option<Color>) {
+        if self.media_accent.replace(accent) != accent
+            && self.config.peek().appearance.accent == Accent::Auto
+        {
+            self.apply_theme();
+        }
+    }
+
+    /// Video frames early in a file are often black or a title card, so a
+    /// few later frames get a chance until one yields a usable color.
+    fn sample_video_accent(&self, pixels: &[u8]) {
+        let frames = self.video_frames.get() + 1;
+        self.video_frames.set(frames);
+        if self.media_accent.get().is_none() && matches!(frames, 24 | 72 | 150 | 300) {
+            if let Some(accent) = crate::artwork::dominant_color(pixels) {
+                self.set_media_accent(Some(accent));
             }
         }
     }
@@ -215,10 +249,7 @@ impl PlayerState {
             Some(media) if media.has_video => {}
             _ => return true,
         }
-        if !self.playing.get()
-            || self.scrub.peek().is_some()
-            || self.queue_open.get()
-        {
+        if !self.playing.get() || self.scrub.peek().is_some() || self.queue_open.get() {
             return true;
         }
         let delay = self.config.peek().interface.autohide_delay.max(1);
@@ -252,9 +283,8 @@ impl PlayerState {
     pub fn drop_files(&self, paths: Vec<PathBuf>) {
         let playable = crate::cli::collect_media(paths);
         if playable.is_empty() {
-            self.status.set(Status::Error(
-                "no playable files in the drop".into(),
-            ));
+            self.status
+                .set(Status::Error("no playable files in the drop".into()));
             return;
         }
         self.enqueue(playable);
@@ -298,7 +328,9 @@ impl PlayerState {
     }
 
     fn start_media(&self, info: MediaInfo, cover: Option<crate::artwork::Artwork>) {
-        let (cover, backdrop) = cover.map(|art| art.into_images()).unwrap_or((None, None));
+        let art = cover.map(|art| art.into_images());
+        self.set_media_accent(art.as_ref().and_then(|art| art.accent));
+        let (cover, backdrop) = art.map(|art| (art.cover, art.backdrop)).unwrap_or_default();
         self.cover.set(cover);
         self.backdrop.set(backdrop);
         let autoplay = self.config.peek().playback.autoplay;
@@ -324,6 +356,7 @@ impl PlayerState {
         self.frame.set(None);
         self.cover.set(None);
         self.backdrop.set(None);
+        self.video_frames.set(0);
         self.position.set(0.0);
         self.duration.set(0.0);
         self.scrub.set(None);
@@ -353,7 +386,9 @@ impl PlayerState {
     }
 
     pub fn seek_to(&self, pos: f64) {
-        let Some(media) = self.media.get() else { return };
+        let Some(media) = self.media.get() else {
+            return;
+        };
         let pos = pos.clamp(0.0, self.duration.get().max(pos));
         self.position.set(pos);
         self.engine.seek(&media, pos);
@@ -393,7 +428,8 @@ impl PlayerState {
     pub fn toggle_mute(&self) {
         let muted = !self.muted.get();
         self.muted.set(muted);
-        self.engine.set_volume(if muted { 0.0 } else { self.volume.get() });
+        self.engine
+            .set_volume(if muted { 0.0 } else { self.volume.get() });
     }
 
     pub fn cycle_speed(&self, forward: bool) {
@@ -433,7 +469,9 @@ impl PlayerState {
 
     pub fn advance(&self, forward: bool) -> bool {
         let queue = self.queue.get();
-        let Some(index) = self.current.get() else { return false };
+        let Some(index) = self.current.get() else {
+            return false;
+        };
         let next = if self.shuffle.get() && queue.len() > 1 {
             let mut s = self.rng.get();
             s ^= s << 13;
@@ -492,6 +530,7 @@ impl PlayerState {
                     self.current.set(None);
                     self.stop_session();
                     self.media.set(None);
+                    self.set_media_accent(None);
                     self.status.set(Status::Empty);
                     self.playing.set(false);
                 } else {
@@ -531,6 +570,7 @@ impl PlayerState {
             move |frame| {
                 if let Some((gen, f)) = frame {
                     if gen == state.engine.generation() {
+                        state.sample_video_accent(&f.pixels);
                         if let Ok(image) =
                             ImageData::from_premultiplied_rgba(f.width, f.height, f.pixels)
                         {
@@ -590,11 +630,16 @@ impl PlayerState {
         self.engine.set_paused(!self.playing.peek());
     }
 
+    pub fn is_maximized(&self) -> bool {
+        self.window
+            .borrow()
+            .as_ref()
+            .is_some_and(|handle| handle.decorations().maximized)
+    }
+
     pub fn toggle_maximize(&self) {
         if let Some(handle) = self.window.borrow().as_ref() {
-            let next = !self.maximized.peek();
-            handle.set_maximized(next);
-            self.maximized.set(next);
+            handle.set_maximized(!handle.decorations().maximized);
         }
     }
 

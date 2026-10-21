@@ -1,5 +1,5 @@
 use crate::components::*;
-use crate::state::{PlayerState, Repeat, Status};
+use crate::state::{PlayerState, Repeat};
 use creamui_widgets::{RawSlider, Text};
 
 fn frac(point: Point, rect: Rect) -> f64 {
@@ -143,10 +143,10 @@ fn play_button(p: &PlayerState) -> BoxedWidget {
         .keyboard_focus(false)
         .background(t.colors.accent)
         .corner_radius(19.0)
-        .hover_style(StateStyle::new().background(
-            t.colors.accent.mix(t.colors.text_primary, 0.12),
-        ))
-        .child(Box::new(Icon::new(icon, t.colors.selection_text).size(19.0))),
+        .hover_style(StateStyle::new().background(t.colors.accent.mix(t.colors.text_primary, 0.12)))
+        .child(Box::new(
+            Icon::new(icon, t.colors.selection_text).size(19.0),
+        )),
     )
 }
 
@@ -172,69 +172,13 @@ fn time_label(text: String, end: bool) -> BoxedWidget {
     )
 }
 
-fn ellipsize(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        text.to_string()
-    } else {
-        format!("{}…", text.chars().take(max - 1).collect::<String>().trim_end())
-    }
-}
-
-fn info(p: &PlayerState, width: f32) -> BoxedWidget {
-    let title_chars = (width / 7.0).max(8.0) as usize;
-    let detail_chars = (width / 6.0).max(8.0) as usize;
-    let show_details = p.config.get().interface.show_details;
-    let Some(media) = p.media.get() else {
-        return if p.status.get() == Status::Loading {
-            label("Loading…", 12.0, true)
-        } else {
-            view(row(0.0), vec![])
-        };
-    };
-    let mut lines = vec![Box::new(Text::new(ellipsize(&media.title, title_chars)).font_size(12.5)) as BoxedWidget];
-    let mut detail: Vec<String> = Vec::new();
-    if media.has_video {
-        if let Some(artist) = &media.artist {
-            detail.push(artist.replace(';', ", "));
-        }
-        if show_details {
-            detail.push(format!("{} · {}×{}", media.video_codec, media.width, media.height));
-        }
-    } else {
-        detail.extend(media.artist.iter().map(|a| a.replace(';', ", ")));
-        detail.extend(media.album.iter().cloned());
-        if show_details && !media.audio_codec.is_empty() {
-            detail.push(media.audio_codec.to_uppercase());
-        }
-    }
-    if !detail.is_empty() {
-        lines.push(label(ellipsize(&detail.join(" · "), detail_chars), 10.5, true));
-    }
-    view(
-        Style {
-            flex_grow: 1.0,
-            flex_basis: Dimension::Length(0.0),
-            align_items: Some(AlignItems::Start),
-            padding: creamui_core::layout::Rect {
-                left: LengthPercentage::Length(10.0),
-                right: LengthPercentage::Length(6.0),
-                top: LengthPercentage::Length(0.0),
-                bottom: LengthPercentage::Length(0.0),
-            },
-            ..column(2.0)
-        },
-        lines,
-    )
-}
-
 pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     let t = use_theme();
     let config = p.config.get();
     let max_width = config.interface.controls_width.max_width();
     let inner = (window_width - 32.0).min(max_width) - 26.0;
-    // Optional controls make way for the title on narrow windows.
-    let compact = inner < 600.0;
-    let info_width = inner - 182.0 - if compact { 72.0 } else { 240.0 };
+    // Optional controls make way for the transport on narrow windows.
+    let compact = inner < 460.0;
     let duration = p.duration.get();
     let position = p.shown_position();
     let end_time = match config.interface.time_display {
@@ -269,7 +213,11 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     let repeat = {
         let p2 = p.clone();
         let mode = p.repeat.get();
-        let icon = if mode == Repeat::One { "repeat-one" } else { "repeat" };
+        let icon = if mode == Repeat::One {
+            "repeat-one"
+        } else {
+            "repeat"
+        };
         icon_button(p, icon, mode != Repeat::Off, move || p2.cycle_repeat())
     };
     let open = {
@@ -297,13 +245,13 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
             .corner_radius(8.0)
             .hover_style(StateStyle::new().background(t.colors.surface_hover))
             .child(Box::new(
-                Text::new(format!("{}×", speed))
-                    .font_size(11.5)
-                    .color(if (speed - 1.0).abs() > 0.001 {
+                Text::new(format!("{}×", speed)).font_size(11.5).color(
+                    if (speed - 1.0).abs() > 0.001 {
                         t.colors.accent
                     } else {
                         t.colors.text_secondary
-                    }),
+                    },
+                ),
             )),
         ) as BoxedWidget
     };
@@ -340,29 +288,34 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
         ) as BoxedWidget
     };
 
+    let side = |justify: JustifyContent, children: Vec<BoxedWidget>| {
+        view(
+            Style {
+                flex_grow: 1.0,
+                flex_basis: Dimension::Length(0.0),
+                justify_content: Some(justify),
+                ..row(4.0)
+            },
+            children,
+        )
+    };
+    let (leading, trailing) = if compact {
+        (vec![queue], vec![mute])
+    } else {
+        (vec![open, queue], vec![speed, mute, volume])
+    };
     let transport = view(
         row(4.0),
         vec![
+            side(JustifyContent::Start, leading),
             view(
                 Style {
                     flex_shrink: 0.0,
-                    ..row(4.0)
+                    ..row(6.0)
                 },
                 vec![shuffle, prev, play_button(p), next, repeat],
             ),
-            info(p, info_width),
-            view(
-                Style {
-                    flex_shrink: 0.0,
-                    justify_content: Some(JustifyContent::End),
-                    ..row(4.0)
-                },
-                if compact {
-                    vec![queue, mute]
-                } else {
-                    vec![open, queue, speed, mute, volume]
-                },
-            ),
+            side(JustifyContent::End, trailing),
         ],
     );
 

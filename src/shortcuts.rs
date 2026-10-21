@@ -19,7 +19,7 @@ impl PlayerState {
             Key::Up => self.set_volume(self.volume.get() + 0.05),
             Key::Down => self.set_volume(self.volume.get() - 0.05),
             Key::Escape => {
-                if self.maximized.peek() {
+                if self.is_maximized() {
                     self.toggle_maximize();
                 } else if let Some(handle) = self.window.borrow().as_ref() {
                     handle.close();

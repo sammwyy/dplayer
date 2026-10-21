@@ -10,16 +10,16 @@ use creamui_core::{
     BoxShadow, BoxedWidget, LinearGradient, Size, StateStyle, Styled,
 };
 use creamui_reactive::Signal;
-use creamui_render::{WindowDecorationMode, WindowHandle};
+use creamui_render::WindowHandle;
 use creamui_theme::{use_theme, Color};
 use creamui_widgets::{
-    tab_styles, ButtonVariant, CUIWindowDragArea, Dialog, Icon, RawButton, RawScrollView,
-    RawSlider, RawView, ScrollController, SegmentedControl, Switch, Tab, TabColors, TabSizing,
-    Tabs, Text,
+    tab_styles, AppTitlebar, ButtonVariant, Dialog, Icon, RawButton, RawScrollView, RawSlider,
+    RawView, ScrollController, SegmentedControl, Switch, Tab, TabColors, TabSizing, Tabs, Text,
 };
 use std::{cell::RefCell, rc::Rc};
 
 const HEADER_HEIGHT: f32 = 64.0;
+const CENTER_MARGIN: f32 = 12.0;
 const DOCUMENT_WIDTH: f32 = 720.0;
 const PAGES: [(Page, &str); 5] = [
     (Page::Playback, "Playback"),
@@ -47,7 +47,6 @@ pub(crate) struct State {
     scroll: ScrollController,
     icons: Icons,
     system_accent: Color,
-    maximized: Signal<bool>,
     pub(crate) window: Rc<RefCell<Option<WindowHandle>>>,
 }
 
@@ -61,7 +60,6 @@ impl State {
             scroll: ScrollController::new(0.0),
             icons: Icons::load(),
             system_accent: crate::app::load_system_theme().colors.accent,
-            maximized: Signal::new(false),
             window: Rc::new(RefCell::new(None)),
         }
     }
@@ -172,30 +170,7 @@ pub(crate) fn build(state: &State, size: Size) -> BoxedWidget {
     })
 }
 
-/// Space taken by compositor-drawn controls on either side of the header.
-fn header_insets(width: f32) -> (f32, f32) {
-    let decorations = creamui_render::use_window_decorations();
-    let controls = decorations.controls;
-    match decorations.mode {
-        WindowDecorationMode::Client => (0.0, 120.0),
-        WindowDecorationMode::Pending => (0.0, 128.0),
-        WindowDecorationMode::Hybrid if controls.width > 0 && controls.height > 0 => {
-            let (left, right) = (controls.x as f32, (controls.x + controls.width) as f32);
-            if (controls.y as f32) >= HEADER_HEIGHT {
-                (0.0, 0.0)
-            } else if (left + right) / 2.0 <= width / 2.0 {
-                (right + 8.0, 0.0)
-            } else {
-                (0.0, width - left + 8.0)
-            }
-        }
-        WindowDecorationMode::Hybrid => (0.0, 128.0),
-        _ => (0.0, 0.0),
-    }
-}
-
 fn titlebar(state: &State, page: Page, width: f32) -> BoxedWidget {
-    let (start, end) = header_insets(width);
     let labels: Vec<&str> = PAGES.iter().map(|(_, label)| *label).collect();
     let wanted = tab_styles(&labels, TabSizing::Equal, 34.0, 14.0)
         .iter()
@@ -206,78 +181,24 @@ fn titlebar(state: &State, page: Page, width: f32) -> BoxedWidget {
         .sum::<f32>()
         + 8.0 * (labels.len() as f32 - 1.0)
         + 8.0;
-    let left = start + 12.0;
-    let right = (width - end - 12.0).max(left);
-    let symmetric = 2.0 * (width / 2.0 - left).min(right - width / 2.0).max(0.0);
-    let available = wanted
-        .min(if symmetric >= 200.0 {
-            symmetric
-        } else {
-            right - left
-        })
-        .max(0.0);
-    let x = (width / 2.0 - available / 2.0).clamp(left, (right - available).max(left));
-    let mut children = vec![
-        view(fixed(x, 1.0), vec![]),
-        Box::new(RawView::new(fixed(available, 42.0)).child(navigation(state, page, available)))
-            as BoxedWidget,
-        view(
-            Style {
-                flex_grow: 1.0,
-                ..row(0.0)
-            },
-            vec![],
-        ),
-    ];
-    if creamui_render::use_window_decorations().mode == WindowDecorationMode::Client {
-        children.push(client_controls(state));
-        children.push(view(fixed(12.0, 1.0), vec![]));
-    }
-    Box::new(
-        CUIWindowDragArea::new()
-            .layout(fixed(width, HEADER_HEIGHT))
-            .with_children(children),
-    )
-}
-
-fn client_controls(state: &State) -> BoxedWidget {
-    let theme = use_theme();
-    let buttons = ["minimize", "maximize", "close"]
-        .into_iter()
-        .enumerate()
-        .map(|(index, icon)| {
-            let window = state.window.clone();
-            let maximized = state.maximized.clone();
-            Box::new(
-                RawButton::new(
-                    Style {
-                        justify_content: Some(JustifyContent::Center),
-                        ..fixed(32.0, 32.0)
-                    },
-                    move || {
-                        if let Some(handle) = window.borrow().as_ref() {
-                            match index {
-                                0 => handle.minimize(),
-                                1 => {
-                                    let next = !maximized.peek();
-                                    handle.set_maximized(next);
-                                    maximized.set(next);
-                                }
-                                _ => handle.close(),
-                            }
-                        }
-                    },
-                )
-                .keyboard_focus(false)
-                .corner_radius(8.0)
-                .hover_style(StateStyle::new().background(theme.colors.surface_hover))
-                .child(Box::new(
-                    Icon::new(state.icons.get(icon), theme.colors.text_secondary).size(15.0),
-                )),
-            ) as BoxedWidget
-        })
-        .collect();
-    view(row(4.0), buttons)
+    let bar = AppTitlebar::new(width)
+        .height(HEADER_HEIGHT)
+        .center_margin(CENTER_MARGIN);
+    let (start, end) = bar.reserved();
+    let centered = width - 2.0 * (start.max(end) + CENTER_MARGIN);
+    // Narrow windows give the tabs all the room beside the controls instead
+    // of a symmetric slot.
+    let available = if centered >= wanted {
+        wanted
+    } else {
+        (width - start - end - 2.0 * CENTER_MARGIN).max(0.0)
+    };
+    let tabs = RawView::new(fixed(available, 42.0)).child(navigation(state, page, available));
+    Box::new(if centered >= wanted {
+        bar.center(tabs)
+    } else {
+        bar.padding(CENTER_MARGIN).mirror(false).start(tabs)
+    })
 }
 
 fn navigation(state: &State, active: Page, available: f32) -> BoxedWidget {
@@ -585,24 +506,13 @@ fn interface(state: &State) -> BoxedWidget {
             ),
             section(
                 "Information",
-                vec![
-                    preference_row(
-                        state,
-                        "clock",
-                        "Time on the right",
-                        "Show the total length or the time left.",
-                        time,
-                    ),
-                    preference_row(
-                        state,
-                        "text",
-                        "Media details",
-                        "Codec and resolution below the title.",
-                        toggle(state, interface.show_details, |c| {
-                            c.interface.show_details = !c.interface.show_details
-                        }),
-                    ),
-                ],
+                vec![preference_row(
+                    state,
+                    "clock",
+                    "Time on the right",
+                    "Show the total length or the time left.",
+                    time,
+                )],
             ),
         ],
     )
@@ -680,13 +590,27 @@ fn accents(state: &State, selected: Accent) -> BoxedWidget {
     let swatches = Accent::ALL
         .into_iter()
         .map(|accent| {
-            let color = accent.color().unwrap_or(state.system_accent);
+            let color: creamui_core::Background = match accent {
+                Accent::Auto => {
+                    LinearGradient::new(135.0, Color::rgb(236, 72, 153), Color::rgb(59, 130, 246))
+                        .into()
+                }
+                _ => accent.color().unwrap_or(state.system_accent).into(),
+            };
             let active = accent == selected;
             let choose = state.clone();
-            let check: BoxedWidget = if active {
-                Box::new(Icon::new(state.icons.get("check"), Color::rgb(255, 255, 255)).size(14.0))
+            let glyph = if active {
+                Some("check")
+            } else if accent == Accent::Auto {
+                Some("sparkle")
             } else {
-                view(row(0.0), vec![])
+                None
+            };
+            let check: BoxedWidget = match glyph {
+                Some(name) => {
+                    Box::new(Icon::new(state.icons.get(name), Color::rgb(255, 255, 255)).size(14.0))
+                }
+                None => view(row(0.0), vec![]),
             };
             view(
                 Style {

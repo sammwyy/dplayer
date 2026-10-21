@@ -128,3 +128,14 @@ pub(crate) fn format_time(seconds: f64) -> String {
         format!("{m}:{s:02}")
     }
 }
+
+pub(crate) fn ellipsize(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        format!(
+            "{}…",
+            text.chars().take(max - 1).collect::<String>().trim_end()
+        )
+    }
+}

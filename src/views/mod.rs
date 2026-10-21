@@ -1,7 +1,7 @@
+pub(crate) mod chrome;
 pub mod controls;
 pub mod queue;
 pub mod stage;
-pub(crate) mod chrome;
 
 use crate::components::*;
 use crate::state::{PlayerState, Status};
@@ -17,9 +17,7 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
         let mut children = vec![stage::build(p, size)];
         let reveal = ease(p.chrome_progress.get());
         if reveal > 0.0 {
-            if let Some(bar) = chrome::build(p, reveal, size.width) {
-                children.push(bar);
-            }
+            children.push(chrome::build(p, reveal, size.width));
             if p.status.get() != Status::Empty {
                 children.push(controls::build(p, reveal, size.width));
             }

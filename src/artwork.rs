@@ -1,28 +1,39 @@
-//! Cover art decoding and the soft backdrop derived from it.
+//! Cover art decoding, the soft backdrop derived from it and its accent color.
 //!
 //! Runs on a background thread, so it only hands plain pixel buffers back to
 //! the UI thread.
 
 use creamui_image::ImageData;
+use creamui_theme::Color;
 
 const BACKDROP_SIDE: u32 = 36;
 const BLUR_RADIUS: i32 = 3;
 const BLUR_PASSES: usize = 3;
+const ACCENT_SAMPLES: usize = 4096;
+const HUE_BUCKETS: usize = 36;
 
 pub struct Artwork {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
     backdrop: (u32, u32, Vec<u8>),
+    accent: Option<Color>,
+}
+
+pub struct ArtworkImages {
+    pub cover: Option<ImageData>,
+    pub backdrop: Option<ImageData>,
+    pub accent: Option<Color>,
 }
 
 impl Artwork {
-    pub fn into_images(self) -> (Option<ImageData>, Option<ImageData>) {
+    pub fn into_images(self) -> ArtworkImages {
         let (bw, bh, backdrop) = self.backdrop;
-        (
-            ImageData::from_premultiplied_rgba(self.width, self.height, self.pixels).ok(),
-            ImageData::from_premultiplied_rgba(bw, bh, backdrop).ok(),
-        )
+        ArtworkImages {
+            cover: ImageData::from_premultiplied_rgba(self.width, self.height, self.pixels).ok(),
+            backdrop: ImageData::from_premultiplied_rgba(bw, bh, backdrop).ok(),
+            accent: self.accent,
+        }
     }
 }
 
@@ -31,12 +42,103 @@ pub fn decode(bytes: &[u8]) -> Option<Artwork> {
     let (width, height) = (image.width(), image.height());
     let pixels = image.pixels().to_vec();
     let backdrop = blur(downscale(&pixels, width, height));
+    let accent = dominant_color(&pixels);
     Some(Artwork {
         width,
         height,
         pixels,
         backdrop,
+        accent,
     })
+}
+
+/// The most prominent vivid hue in premultiplied RGBA pixels, tuned to work
+/// as an accent color. Grayscale or very dark images have none.
+pub fn dominant_color(pixels: &[u8]) -> Option<Color> {
+    let count = pixels.len() / 4;
+    let step = (count / ACCENT_SAMPLES).max(1);
+    let mut weights = [0f32; HUE_BUCKETS];
+    let mut sums = [[0f32; 3]; HUE_BUCKETS];
+    let mut samples = 0usize;
+    for pixel in pixels.chunks_exact(4).step_by(step) {
+        if pixel[3] < 128 {
+            continue;
+        }
+        samples += 1;
+        let rgb = [pixel[0], pixel[1], pixel[2]].map(|c| c as f32 / 255.0);
+        let (hue, saturation, value) = hsv(rgb);
+        if value < 0.18 || saturation < 0.22 {
+            continue;
+        }
+        let bucket = ((hue / 360.0 * HUE_BUCKETS as f32) as usize).min(HUE_BUCKETS - 1);
+        let weight = saturation * value;
+        weights[bucket] += weight;
+        for c in 0..3 {
+            sums[bucket][c] += rgb[c] * weight;
+        }
+    }
+    let (best, weight) = weights
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))?;
+    if samples == 0 || *weight < samples as f32 * 0.01 {
+        return None;
+    }
+    let rgb = sums[best].map(|c| c / weight);
+    let (hue, saturation, lightness) = hsl(rgb);
+    Some(from_hsl(
+        hue,
+        saturation.clamp(0.45, 0.85),
+        lightness.clamp(0.45, 0.62),
+    ))
+}
+
+fn hsv([r, g, b]: [f32; 3]) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let delta = max - r.min(g).min(b);
+    let saturation = if max > 0.0 { delta / max } else { 0.0 };
+    (hue(r, g, b, max, delta), saturation, max)
+}
+
+fn hsl([r, g, b]: [f32; 3]) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let lightness = (max + min) / 2.0;
+    let saturation = if delta == 0.0 {
+        0.0
+    } else {
+        delta / (1.0 - (2.0 * lightness - 1.0).abs())
+    };
+    (hue(r, g, b, max, delta), saturation, lightness)
+}
+
+fn hue(r: f32, g: f32, b: f32, max: f32, delta: f32) -> f32 {
+    if delta == 0.0 {
+        0.0
+    } else if max == r {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    }
+}
+
+fn from_hsl(hue: f32, saturation: f32, lightness: f32) -> Color {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation.min(1.0);
+    let x = chroma * (1.0 - ((hue / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let (r, g, b) = match (hue / 60.0) as u32 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+    let channel = |c: f32| ((c + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color::rgb(channel(r), channel(g), channel(b))
 }
 
 /// Area-averages premultiplied pixels into a small square thumbnail,
@@ -115,6 +217,23 @@ fn blur((width, height, mut pixels): (u32, u32, Vec<u8>)) -> (u32, u32, Vec<u8>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn solid(rgb: [u8; 3], count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|_| [rgb[0], rgb[1], rgb[2], 255])
+            .collect()
+    }
+
+    #[test]
+    fn accent_follows_the_dominant_vivid_hue() {
+        let mut pixels = solid([20, 20, 20], 600);
+        pixels.extend(solid([30, 80, 220], 300));
+        pixels.extend(solid([220, 40, 40], 100));
+        let accent = dominant_color(&pixels).expect("a vivid hue");
+        assert!(accent.b > accent.r && accent.b > accent.g, "{accent:?}");
+        assert!(dominant_color(&solid([128, 128, 128], 500)).is_none());
+        assert!(dominant_color(&solid([4, 4, 30], 500)).is_none());
+    }
 
     #[test]
     fn backdrop_is_small_square_and_smooth() {
