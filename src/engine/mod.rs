@@ -16,7 +16,7 @@ pub use decode::{AUDIO_CHANNELS, AUDIO_RATE};
 
 /// Extracts the first attached picture stream from `path` as PNG bytes.
 pub fn cover_art(path: &std::path::Path) -> Option<Vec<u8>> {
-    let output = std::process::Command::new("ffmpeg")
+    let output = crate::backends::background_command("ffmpeg")
         .args([
             "-v",
             "error",

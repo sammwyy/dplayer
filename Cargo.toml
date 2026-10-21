@@ -19,8 +19,6 @@ path = "src/main.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rodio = "0.23"
-libc = "0.2"
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 creamui-image = { path = "../creamui/crates/image", features = ["svg", "jpeg", "webp"] }
 creamui-core = { path = "../creamui/crates/core" }
 creamui-reactive = { path = "../creamui/crates/reactive" }
@@ -31,8 +29,18 @@ creamui-theme-watch = { path = "../creamui/crates/theme-watch" }
 creamui-fonts = { path = "../creamui/crates/fonts" }
 creamui-widgets = { path = "../creamui/crates/widgets" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
-creamui-render = { path = "../creamui/crates/render", default-features = false, features = ["platform-winit", "platform-wayland", "platform-window-integration-blair", "platform-blur-blair", "platform-blur-kwin"] }
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+creamui-render = { path = "../creamui/crates/render", default-features = false, features = ["platform-winit", "platform-wayland", "platform-x11", "platform-window-integration-blair", "platform-blur-blair", "platform-blur-kwin"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd = "0.17"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+creamui-render = { path = "../creamui/crates/render", default-features = false, features = ["platform-winit", "platform-windows"] }
 
 [profile.dev]
 debug = 0

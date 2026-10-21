@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct MediaInfo {
@@ -85,7 +84,7 @@ fn rotation(stream: &Stream) -> i32 {
 }
 
 pub fn probe(path: &Path) -> Result<MediaInfo, String> {
-    let output = Command::new("ffprobe")
+    let output = crate::backends::background_command("ffprobe")
         .args([
             "-v",
             "error",

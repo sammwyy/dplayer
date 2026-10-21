@@ -1,17 +1,11 @@
-//! Subprocess decoder running `ffmpeg` with two raw output pipes: RGBA8 video
-//! frames on fd 3 and interleaved `f32le` stereo PCM on fd 4, paced at the
-//! input clock via `-readrate`.
+//! Subprocess decoder running `ffmpeg` with two raw output streams: RGBA8 video
+//! frames and interleaved `f32le` stereo PCM, paced at the input clock via `-readrate`.
 
-use std::fs::File;
+use crate::backends::{self, ProcessControl, SpawnedDecoder};
 use std::io::Read;
-use std::os::unix::io::FromRawFd;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
 use std::sync::mpsc::{sync_channel, Receiver, Sender, SyncSender};
 use std::thread;
 
-const VIDEO_FD: i32 = 3;
-const AUDIO_FD: i32 = 4;
 pub const AUDIO_RATE: u32 = 48_000;
 pub const AUDIO_CHANNELS: u32 = 2;
 const AUDIO_CHUNK: usize = 16 * 1024;
@@ -29,25 +23,17 @@ pub enum EngineEvent {
 }
 
 pub struct DecodeSession {
-    pid: u32,
+    control: ProcessControl,
     pub audio_rx: Option<Receiver<Vec<u8>>>,
     _waiter: thread::JoinHandle<()>,
-}
-
-fn pipe() -> (File, File) {
-    let mut fds = [0i32; 2];
-    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-        panic!("pipe() failed: {}", std::io::Error::last_os_error());
-    }
-    unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) }
 }
 
 fn ffmpeg_args(
     path: &std::path::Path,
     pos: f64,
     speed: f32,
-    has_video: bool,
-    has_audio: bool,
+    video_dest: Option<&str>,
+    audio_dest: Option<&str>,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-hide_banner".into(),
@@ -62,7 +48,7 @@ fn ffmpeg_args(
     // audio stream, this scales playback rate while keeping A/V synchronized.
     args.extend(["-readrate".into(), format!("{speed:.4}")]);
     args.extend(["-i".into(), path.to_string_lossy().into_owned()]);
-    if has_video {
+    if let Some(video_dest) = video_dest {
         args.extend([
             "-map".into(),
             "0:v:0".into(),
@@ -75,10 +61,10 @@ fn ffmpeg_args(
             "rawvideo".into(),
             "-pix_fmt".into(),
             "rgba".into(),
-            format!("pipe:{VIDEO_FD}"),
+            video_dest.into(),
         ]);
     }
-    if has_audio {
+    if let Some(audio_dest) = audio_dest {
         args.extend([
             "-map".into(),
             "0:a:0".into(),
@@ -96,7 +82,7 @@ fn ffmpeg_args(
             AUDIO_CHANNELS.to_string(),
             "-ar".into(),
             AUDIO_RATE.to_string(),
-            format!("pipe:{AUDIO_FD}"),
+            audio_dest.into(),
         ]);
     }
     args
@@ -119,50 +105,21 @@ impl DecodeSession {
         video_tx: SyncSender<(u64, VideoFrame)>,
         generation: u64,
     ) -> std::io::Result<Self> {
-        let (video_read, video_write) = pipe();
-        let (audio_read, audio_write) = pipe();
-        let video_w = std::os::unix::io::IntoRawFd::into_raw_fd(video_write);
-        let audio_w = std::os::unix::io::IntoRawFd::into_raw_fd(audio_write);
-
-        let mut command = Command::new("ffmpeg");
-        command
-            .args(ffmpeg_args(path, pos, speed, has_video, has_audio))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        unsafe {
-            command.pre_exec(move || {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                // Avoid clobbering either pipe write end if its fd already
-                // matches the other stream's target descriptor.
-                let mut v = video_w;
-                let mut a = audio_w;
-                if v == AUDIO_FD {
-                    v = libc::fcntl(v, libc::F_DUPFD, AUDIO_FD + 1);
-                }
-                if a == VIDEO_FD {
-                    a = libc::fcntl(a, libc::F_DUPFD, AUDIO_FD + 1);
-                }
-                if has_video {
-                    libc::dup2(v, VIDEO_FD);
-                }
-                if has_audio {
-                    libc::dup2(a, AUDIO_FD);
-                }
-                Ok(())
-            });
-        }
-        let mut child = command.spawn().inspect_err(|_| unsafe {
-            libc::close(video_w);
-            libc::close(audio_w);
+        let SpawnedDecoder {
+            mut child,
+            control,
+            video_reader,
+            audio_reader,
+        } = backends::spawn_ffmpeg(has_video, has_audio, |video_dest, audio_dest| {
+            ffmpeg_args(
+                path,
+                pos,
+                speed,
+                has_video.then_some(video_dest),
+                has_audio.then_some(audio_dest),
+            )
         })?;
-        // Close parent copies of the write descriptors so reader threads observe EOF when ffmpeg exits.
-        unsafe {
-            libc::close(video_w);
-            libc::close(audio_w);
-        }
 
-        let pid = child.id();
         let stderr = child.stderr.take();
         let waiter = thread::spawn(move || {
             let status = child.wait();
@@ -176,8 +133,7 @@ impl DecodeSession {
             let _ = events_tx.send(EngineEvent::Exited(generation, code, tail));
         });
 
-        if has_video {
-            let mut pipe = video_read;
+        if let Some(mut pipe) = video_reader {
             let frame_len = (out_w * out_h * 4) as usize;
             thread::spawn(move || {
                 let mut pixels = vec![0u8; frame_len.max(1)];
@@ -199,9 +155,8 @@ impl DecodeSession {
             });
         }
 
-        let audio_rx = if has_audio {
+        let audio_rx = if let Some(mut pipe) = audio_reader {
             let (tx, rx) = sync_channel::<Vec<u8>>(32);
-            let mut pipe = audio_read;
             thread::spawn(move || {
                 let mut buf = vec![0u8; AUDIO_CHUNK];
                 loop {
@@ -221,28 +176,23 @@ impl DecodeSession {
         };
 
         Ok(DecodeSession {
-            pid,
+            control,
             audio_rx,
             _waiter: waiter,
         })
     }
 
     pub fn suspend(&self) {
-        unsafe {
-            libc::kill(self.pid as i32, libc::SIGSTOP);
-        }
+        self.control.suspend();
     }
+
     pub fn resume(&self) {
-        unsafe {
-            libc::kill(self.pid as i32, libc::SIGCONT);
-        }
+        self.control.resume();
     }
 }
 
 impl Drop for DecodeSession {
     fn drop(&mut self) {
-        unsafe {
-            libc::kill(self.pid as i32, libc::SIGKILL);
-        }
+        self.control.kill();
     }
 }

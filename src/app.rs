@@ -3,13 +3,12 @@ use creamui_render::{AppBuilder, AppHandle, BlurRegion, WindowHandle, WindowOpti
 use creamui_theme::{Color, Theme};
 use creamui_theme_watch::ThemeListener;
 use std::cell::RefCell;
-use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 pub fn run(paths: Vec<PathBuf>) {
-    ensure_wayland_display();
+    crate::backends::init_env();
     let options = WindowOptions {
         title: "Media Player".into(),
         width: 960,
@@ -96,26 +95,4 @@ fn watch_theme_reloads(
             }
         },
     );
-}
-
-fn ensure_wayland_display() {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        return;
-    }
-    let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
-        return;
-    };
-    use std::os::unix::fs::FileTypeExt;
-    let mut sockets = fs::read_dir(runtime)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_socket()))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("wayland-"))
-        .collect::<Vec<_>>();
-    sockets.sort();
-    if let Some(socket) = sockets.first() {
-        std::env::set_var("WAYLAND_DISPLAY", socket);
-    }
 }

@@ -1,4 +1,5 @@
 pub mod app;
+pub mod backends;
 pub mod cli;
 mod components;
 mod engine;
