@@ -282,7 +282,7 @@ impl PlayerState {
                     (info, cover)
                 })
             },
-            move |result| { 
+            move |result| {
                 if state.load_token.load(Ordering::Relaxed) != token {
                     return;
                 }
@@ -302,8 +302,7 @@ impl PlayerState {
         self.cover.set(cover);
         self.backdrop.set(backdrop);
         let autoplay = self.config.peek().playback.autoplay;
-        let r = self.engine.start(&info, 0.0, !autoplay);
-        match r {
+        match self.engine.start(&info, 0.0, !autoplay) {
             Ok(()) => {
                 self.duration.set(info.duration);
                 self.position.set(0.0);

@@ -180,7 +180,9 @@ fn ellipsize(text: &str, max: usize) -> String {
     }
 }
 
-fn info(p: &PlayerState) -> BoxedWidget {
+fn info(p: &PlayerState, width: f32) -> BoxedWidget {
+    let title_chars = (width / 7.0).max(8.0) as usize;
+    let detail_chars = (width / 6.0).max(8.0) as usize;
     let show_details = p.config.get().interface.show_details;
     let Some(media) = p.media.get() else {
         return if p.status.get() == Status::Loading {
@@ -189,24 +191,24 @@ fn info(p: &PlayerState) -> BoxedWidget {
             view(row(0.0), vec![])
         };
     };
-    let mut lines = vec![Box::new(Text::new(ellipsize(&media.title, 48)).font_size(12.5)) as BoxedWidget];
+    let mut lines = vec![Box::new(Text::new(ellipsize(&media.title, title_chars)).font_size(12.5)) as BoxedWidget];
     let mut detail: Vec<String> = Vec::new();
     if media.has_video {
         if let Some(artist) = &media.artist {
-            detail.push(artist.clone());
+            detail.push(artist.replace(';', ", "));
         }
         if show_details {
             detail.push(format!("{} · {}×{}", media.video_codec, media.width, media.height));
         }
     } else {
-        detail.extend(media.artist.iter().cloned());
+        detail.extend(media.artist.iter().map(|a| a.replace(';', ", ")));
         detail.extend(media.album.iter().cloned());
         if show_details && !media.audio_codec.is_empty() {
             detail.push(media.audio_codec.to_uppercase());
         }
     }
     if !detail.is_empty() {
-        lines.push(label(ellipsize(&detail.join(" · "), 60), 10.5, true));
+        lines.push(label(ellipsize(&detail.join(" · "), detail_chars), 10.5, true));
     }
     view(
         Style {
@@ -225,9 +227,14 @@ fn info(p: &PlayerState) -> BoxedWidget {
     )
 }
 
-pub fn build(p: &PlayerState, reveal: f32) -> BoxedWidget {
+pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     let t = use_theme();
     let config = p.config.get();
+    let max_width = config.interface.controls_width.max_width();
+    let inner = (window_width - 32.0).min(max_width) - 26.0;
+    // Optional controls make way for the title on narrow windows.
+    let compact = inner < 600.0;
+    let info_width = inner - 182.0 - if compact { 72.0 } else { 240.0 };
     let duration = p.duration.get();
     let position = p.shown_position();
     let end_time = match config.interface.time_display {
@@ -343,14 +350,18 @@ pub fn build(p: &PlayerState, reveal: f32) -> BoxedWidget {
                 },
                 vec![shuffle, prev, play_button(p), next, repeat],
             ),
-            info(p),
+            info(p, info_width),
             view(
                 Style {
                     flex_shrink: 0.0,
                     justify_content: Some(JustifyContent::End),
                     ..row(4.0)
                 },
-                vec![open, queue, speed, mute, volume],
+                if compact {
+                    vec![queue, mute]
+                } else {
+                    vec![open, queue, speed, mute, volume]
+                },
             ),
         ],
     );
@@ -373,7 +384,7 @@ pub fn build(p: &PlayerState, reveal: f32) -> BoxedWidget {
                 height: Dimension::Auto,
             },
             max_size: creamui_core::layout::Size {
-                width: Dimension::Length(config.interface.controls_width.max_width()),
+                width: Dimension::Length(max_width),
                 height: Dimension::Auto,
             },
             padding: creamui_core::layout::Rect {

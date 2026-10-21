@@ -325,7 +325,7 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
                 .iter()
                 .chain(media.artist.iter())
                 .filter(|s| !s.trim().is_empty())
-                .cloned()
+                .map(|s| s.replace(';', ", "))
                 .collect();
             let subtitle = if parts.is_empty() {
                 crate::cli::kind_label(&media.path)
@@ -347,19 +347,18 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
         (size.width - side - 48.0 - 96.0).clamp(120.0, 420.0)
     };
     let text_style = Style {
-        size: creamui_core::layout::Size {
-            width: Dimension::Percent(1.0),
+        max_size: creamui_core::layout::Size {
+            width: Dimension::Length(text_width),
             height: Dimension::Auto,
         },
         ..Default::default()
     };
     let info = view(
         Style {
-            size: creamui_core::layout::Size {
+            max_size: creamui_core::layout::Size {
                 width: Dimension::Length(text_width),
                 height: Dimension::Auto,
             },
-            flex_shrink: 0.0,
             align_items: Some(if narrow {
                 AlignItems::Center
             } else {
@@ -385,8 +384,16 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
             ),
         ],
     );
+    // Positioned so it paints above the absolutely positioned backdrop layers.
     let content = view(
         Style {
+            position: creamui_core::layout::Position::Absolute,
+            inset: creamui_core::layout::Rect {
+                top: LengthPercentageAuto::Length(0.0),
+                left: LengthPercentageAuto::Length(0.0),
+                right: LengthPercentageAuto::Length(0.0),
+                bottom: LengthPercentageAuto::Length(0.0),
+            },
             justify_content: Some(JustifyContent::Center),
             align_items: Some(AlignItems::Center),
             padding: creamui_core::layout::Rect {
@@ -394,10 +401,6 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
                 right: LengthPercentage::Length(32.0),
                 top: LengthPercentage::Length(chrome::HEIGHT),
                 bottom: LengthPercentage::Length(if narrow { 120.0 } else { 110.0 }),
-            },
-            size: creamui_core::layout::Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Percent(1.0),
             },
             ..if narrow { column(26.0) } else { row(48.0) }
         },
@@ -407,12 +410,11 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
     layers.push(content);
     view(
         Style {
-            flex_grow: 1.0,
-            flex_basis: Dimension::Length(0.0),
-            min_size: creamui_core::layout::Size {
-                width: Dimension::Length(0.0),
-                height: Dimension::Length(0.0),
+            size: creamui_core::layout::Size {
+                width: Dimension::Length(size.width),
+                height: Dimension::Length(size.height),
             },
+            flex_shrink: 0.0,
             ..column(0.0)
         },
         layers,

@@ -9,7 +9,6 @@ mod engine;
 mod icons;
 mod settings;
 mod shortcuts;
-pub mod snap;
 mod state;
 mod views;
 

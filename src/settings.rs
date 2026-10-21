@@ -118,7 +118,7 @@ pub(crate) fn build(state: &State, size: Size) -> BoxedWidget {
             vec![body]
         } else {
             vec![
-                page_heading(state, title, description),
+                page_heading(state, title, description, page != Page::Shortcuts),
                 body,
                 Box::new(
                     Text::secondary("Changes are saved automatically and apply to open players.")
@@ -128,7 +128,9 @@ pub(crate) fn build(state: &State, size: Size) -> BoxedWidget {
         };
         if let Some(message) = state.message.get() {
             document_children.push(Box::new(
-                Text::new(message).color(theme.colors.danger).font_size(12.0),
+                Text::new(message)
+                    .color(theme.colors.danger)
+                    .font_size(12.0),
             ));
         }
         let inset = if size.width < 600.0 { 24.0 } else { 40.0 };
@@ -145,7 +147,10 @@ pub(crate) fn build(state: &State, size: Size) -> BoxedWidget {
         .scrollbar_width(5.0)
         .scrollbar_margin(4.0)
         .child(view(document, document_children));
-        let mut children = vec![titlebar(state, page, size.width), Box::new(content) as BoxedWidget];
+        let mut children = vec![
+            titlebar(state, page, size.width),
+            Box::new(content) as BoxedWidget,
+        ];
         if state.reset_open.get() {
             children.push(reset_dialog(state));
         }
@@ -205,7 +210,11 @@ fn titlebar(state: &State, page: Page, width: f32) -> BoxedWidget {
     let right = (width - end - 12.0).max(left);
     let symmetric = 2.0 * (width / 2.0 - left).min(right - width / 2.0).max(0.0);
     let available = wanted
-        .min(if symmetric >= 200.0 { symmetric } else { right - left })
+        .min(if symmetric >= 200.0 {
+            symmetric
+        } else {
+            right - left
+        })
         .max(0.0);
     let x = (width / 2.0 - available / 2.0).clamp(left, (right - available).max(left));
     let mut children = vec![
@@ -275,7 +284,8 @@ fn navigation(state: &State, active: Page, available: f32) -> BoxedWidget {
     let theme = use_theme();
     let labels: Vec<&str> = PAGES.iter().map(|(_, label)| *label).collect();
     let mut styles = tab_styles(&labels, TabSizing::Equal, 34.0, 14.0);
-    let share = ((available - 8.0 - 8.0 * (labels.len() as f32 - 1.0)) / labels.len() as f32).max(0.0);
+    let share =
+        ((available - 8.0 - 8.0 * (labels.len() as f32 - 1.0)) / labels.len() as f32).max(0.0);
     for style in &mut styles {
         style.padding = Style::default().padding;
         if let Dimension::Length(width) = style.size.width {
@@ -315,52 +325,52 @@ fn navigation(state: &State, active: Page, available: f32) -> BoxedWidget {
     Box::new(tabs)
 }
 
-fn page_heading(state: &State, title: &str, description: &str) -> BoxedWidget {
+fn page_heading(state: &State, title: &str, description: &str, resettable: bool) -> BoxedWidget {
     let theme = use_theme();
     let reset = state.clone();
-    view(
-        row(16.0),
-        vec![
-            view(
-                Style {
-                    flex_grow: 1.0,
-                    flex_basis: Dimension::Length(0.0),
-                    align_items: Some(AlignItems::Start),
-                    ..column(5.0)
-                },
-                vec![
-                    Box::new(Text::new(title).font_size(24.0).bold(true)),
-                    Box::new(Text::secondary(description).font_size(13.0)),
-                ],
-            ),
-            Box::new(
-                RawButton::new(
-                    pad(
-                        Style {
-                            justify_content: Some(JustifyContent::Center),
-                            flex_shrink: 0.0,
-                            ..row(7.0)
-                        },
-                        12.0,
-                        7.0,
-                    ),
-                    move || reset.reset_open.set(true),
-                )
-                .background(theme.colors.surface_elevated)
-                .corner_radius(10.0)
-                .outline(theme.colors.border, 1.0)
-                .hover_style(StateStyle::new().background(theme.colors.surface_hover))
-                .focus_style(StateStyle::new().outline(theme.colors.accent, 2.0))
-                .with_children(vec![
-                    Box::new(
-                        Icon::new(state.icons.get("refresh"), theme.colors.text_secondary)
-                            .size(14.0),
-                    ),
-                    Box::new(Text::secondary("Restore defaults").font_size(12.0)),
-                ]),
-            ),
-        ],
-    )
+    let mut children = vec![
+        view(
+            Style {
+                flex_grow: 1.0,
+                flex_basis: Dimension::Length(0.0),
+                align_items: Some(AlignItems::Start),
+                ..column(5.0)
+            },
+            vec![
+                Box::new(Text::new(title).font_size(24.0).bold(true)),
+                Box::new(Text::secondary(description).font_size(13.0)),
+            ],
+        ),
+        Box::new(
+            RawButton::new(
+                pad(
+                    Style {
+                        justify_content: Some(JustifyContent::Center),
+                        flex_shrink: 0.0,
+                        ..row(7.0)
+                    },
+                    12.0,
+                    7.0,
+                ),
+                move || reset.reset_open.set(true),
+            )
+            .background(theme.colors.surface_elevated)
+            .corner_radius(10.0)
+            .outline(theme.colors.border, 1.0)
+            .hover_style(StateStyle::new().background(theme.colors.surface_hover))
+            .focus_style(StateStyle::new().outline(theme.colors.accent, 2.0))
+            .with_children(vec![
+                Box::new(
+                    Icon::new(state.icons.get("refresh"), theme.colors.text_secondary).size(14.0),
+                ),
+                Box::new(Text::secondary("Restore defaults").font_size(12.0)),
+            ]),
+        ) as BoxedWidget,
+    ];
+    if !resettable {
+        children.pop();
+    }
+    view(row(16.0), children)
 }
 
 fn reset_dialog(state: &State) -> BoxedWidget {
@@ -529,8 +539,11 @@ fn interface(state: &State) -> BoxedWidget {
         interface.controls_width as usize,
         &["Compact", "Default", "Wide"],
         |c, i| {
-            c.interface.controls_width =
-                [ControlsWidth::Compact, ControlsWidth::Default, ControlsWidth::Wide][i];
+            c.interface.controls_width = [
+                ControlsWidth::Compact,
+                ControlsWidth::Default,
+                ControlsWidth::Wide,
+            ][i];
         },
     );
     let time = segmented(
@@ -602,8 +615,11 @@ fn appearance(state: &State) -> BoxedWidget {
         appearance.audio_background as usize,
         &["Blurred art", "Gradient", "Black"],
         |c, i| {
-            c.appearance.audio_background =
-                [AudioBackground::Blurred, AudioBackground::Gradient, AudioBackground::Black][i];
+            c.appearance.audio_background = [
+                AudioBackground::Blurred,
+                AudioBackground::Gradient,
+                AudioBackground::Black,
+            ][i];
         },
     );
     let shape = segmented(
@@ -611,7 +627,8 @@ fn appearance(state: &State) -> BoxedWidget {
         appearance.cover_shape as usize,
         &["Rounded", "Square", "Circle"],
         |c, i| {
-            c.appearance.cover_shape = [CoverShape::Rounded, CoverShape::Square, CoverShape::Circle][i];
+            c.appearance.cover_shape =
+                [CoverShape::Rounded, CoverShape::Square, CoverShape::Circle][i];
         },
     );
     let bar = segmented(
@@ -767,7 +784,13 @@ fn preview(state: &State) -> BoxedWidget {
             accent.mix(Color::rgb(0, 0, 0), 0.45),
         ))
         .corner_radius(radius)
-        .box_shadow(BoxShadow::new(0.0, 8.0, 22.0, -6.0, Color::rgba(0, 0, 0, 160)))
+        .box_shadow(BoxShadow::new(
+            0.0,
+            8.0,
+            22.0,
+            -6.0,
+            Color::rgba(0, 0, 0, 160),
+        ))
         .child(Box::new(
             Icon::new(state.icons.get("music"), Color::rgba(255, 255, 255, 220)).size(30.0),
         )),
@@ -778,8 +801,17 @@ fn preview(state: &State) -> BoxedWidget {
             ..column(4.0)
         },
         vec![
-            Box::new(Text::new("Song title").font_size(15.0).bold(true).color(Color::rgb(255, 255, 255))),
-            Box::new(Text::new("Album - Artist").font_size(11.0).color(Color::rgba(255, 255, 255, 170))),
+            Box::new(
+                Text::new("Song title")
+                    .font_size(15.0)
+                    .bold(true)
+                    .color(Color::rgb(255, 255, 255)),
+            ),
+            Box::new(
+                Text::new("Album - Artist")
+                    .font_size(11.0)
+                    .color(Color::rgba(255, 255, 255, 170)),
+            ),
         ],
     );
     let bar_width = match config.interface.controls_width {
@@ -811,7 +843,11 @@ fn preview(state: &State) -> BoxedWidget {
         .background(bar_bg)
         .corner_radius(8.0)
         .with_children(vec![
-            Box::new(RawView::new(fixed(10.0, 10.0)).background(accent).corner_radius(5.0)) as BoxedWidget,
+            Box::new(
+                RawView::new(fixed(10.0, 10.0))
+                    .background(accent)
+                    .corner_radius(5.0),
+            ) as BoxedWidget,
             Box::new(
                 RawView::new(Style {
                     flex_grow: 1.0,
@@ -1099,15 +1135,5 @@ fn document(gap: f32) -> Style {
         align_self: Some(creamui_core::layout::AlignSelf::Center),
         flex_shrink: 0.0,
         ..column(gap)
-    }
-}
-
-pub(crate) fn snapshots(state: &State) {
-    for (page, label) in PAGES {
-        state.page.set(page);
-        for (w, h) in [(780u32, 900u32), (520, 900)] {
-            let state = state.clone();
-            crate::snap::snapshot(&format!("settings-{label}-{w}"), w, h, move |size| build(&state, size));
-        }
     }
 }

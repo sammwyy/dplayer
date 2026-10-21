@@ -7,22 +7,30 @@ A native video and music player for Linux, built on
 
 - Video and audio playback: mp4, mkv, webm, avi, mov, mp3, flac, ogg,
   opus, m4a, wav and anything else ffmpeg understands.
-- Floating transport card: seek bar (click or drag), play/pause, previous /
-  next, shuffle, repeat (off → all → one), playback speed (0.5×–2×),
-  volume slider and mute.
+- Floating transport card, centered with a configurable maximum width, that
+  slides in and out over video: seek bar (click or drag), play/pause,
+  previous / next, shuffle, repeat (off → all → one), playback speed
+  (0.5×–2×), volume slider and mute.
 - Queue panel with add / remove / click-to-play.
-- Embedded cover art for audio files, codec / resolution info line.
+- Music view with the embedded cover art, title and "Album - Artist" over a
+  blurred backdrop of the artwork.
 - Translucent blurred window, hybrid window decorations, and live system-theme
   reload.
 - Keyboard-first: `space` play/pause · `←` `→` seek 5 s (`shift` = 30 s) ·
   `↑` `↓` volume · `f` maximize · `m` mute · `[` `]` speed ·
   `n`/`p` next/previous · `l` repeat · `s` shuffle · `t` queue ·
-  `o` open · `q`/`Esc` quit.
+  `o` open · `,` settings · `q`/`Esc` quit.
+- Settings window (`dplayer --settings`, or the gear in the top-left corner):
+  startup volume / speed / repeat / shuffle, autoplay, seek steps, controls
+  auto-hide delay, animations, bar width and style, accent color, music
+  background and cover shape. Stored in `~/.config/dplayer/config.toml` and
+  applied live to open players.
 
 ## Usage
 
 ```sh
 dplayer [FILE|DIRECTORY ...]
+dplayer --settings
 ```
 
 Directories are expanded to their playable files in sorted order; with no

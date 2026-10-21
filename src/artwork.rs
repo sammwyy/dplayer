@@ -48,8 +48,14 @@ fn downscale(pixels: &[u8], width: u32, height: u32) -> (u32, u32, Vec<u8>) {
     let mut result = vec![0u8; (out * out * 4) as usize];
     for oy in 0..out {
         for ox in 0..out {
-            let (sx0, sx1) = (x0 + ox * side / out, x0 + ((ox + 1) * side / out).max(ox * side / out + 1));
-            let (sy0, sy1) = (y0 + oy * side / out, y0 + ((oy + 1) * side / out).max(oy * side / out + 1));
+            let (sx0, sx1) = (
+                x0 + ox * side / out,
+                x0 + ((ox + 1) * side / out).max(ox * side / out + 1),
+            );
+            let (sy0, sy1) = (
+                y0 + oy * side / out,
+                y0 + ((oy + 1) * side / out).max(oy * side / out + 1),
+            );
             let mut sum = [0u64; 4];
             let mut count = 0u64;
             for y in sy0..sy1.min(height) {

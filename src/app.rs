@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::state::PlayerState;
+use creamui_render::platform::Key;
 use creamui_render::{AppBuilder, AppHandle, BlurRegion, WindowHandle, WindowOptions};
 use creamui_theme::{Color, Theme};
 use creamui_theme_watch::ThemeListener;
@@ -66,10 +67,6 @@ pub fn run(paths: Vec<PathBuf>) {
 pub fn show_settings() {
     crate::backends::init_env();
     let settings = crate::settings::State::load();
-    if crate::snap::enabled() {
-        crate::settings::snapshots(&settings);
-        return;
-    }
     let window = settings.window.clone();
     let options = WindowOptions {
         title: "Media Player Settings".into(),
@@ -90,6 +87,14 @@ pub fn show_settings() {
                 Color::rgba(0, 0, 0, 0),
                 move |handle| {
                     crate::views::chrome::request_hybrid(&handle);
+                    let closer = handle.clone();
+                    handle.on_keyboard_input(move |event, _| {
+                        let escape = event.pressed && event.key == Key::Escape;
+                        if escape {
+                            closer.close();
+                        }
+                        escape
+                    });
                     *ready_window.borrow_mut() = Some(handle);
                 },
                 move |size| crate::settings::build(&settings, size),

@@ -21,7 +21,7 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
                 children.push(bar);
             }
             if p.status.get() != Status::Empty {
-                children.push(controls::build(p, reveal));
+                children.push(controls::build(p, reveal, size.width));
             }
         }
         if p.queue_open.get() {
