@@ -4,20 +4,25 @@ pub mod stage;
 pub(crate) mod chrome;
 
 use crate::components::*;
-use crate::state::PlayerState;
+use crate::state::{PlayerState, Status};
 use creamui_core::Size;
+
+/// Ease-out cubic, so the chrome decelerates as it settles.
+fn ease(progress: f32) -> f32 {
+    1.0 - (1.0 - progress.clamp(0.0, 1.0)).powi(3)
+}
 
 pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
     creamui_reactive::with_context_scope(|| {
-        let mut children = vec![stage::build(p)];
-        let chrome = p.controls_visible.get();
-        if chrome {
-            if let Some(bar) = chrome::build(p) {
+        let mut children = vec![stage::build(p, size)];
+        let reveal = ease(p.chrome_progress.get());
+        if reveal > 0.0 {
+            if let Some(bar) = chrome::build(p, reveal, size.width) {
                 children.push(bar);
             }
-        }
-        if chrome {
-            children.push(controls::build(p));
+            if p.status.get() != Status::Empty {
+                children.push(controls::build(p, reveal));
+            }
         }
         if p.queue_open.get() {
             children.push(queue::build(p));

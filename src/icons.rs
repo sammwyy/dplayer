@@ -70,6 +70,48 @@ impl Icons {
                 "fullscreen",
                 r#"<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>"#,
             ),
+            (
+                "settings",
+                r#"<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/>"#,
+            ),
+            (
+                "sliders",
+                r#"<path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.5"/><circle cx="10" cy="17" r="2.5"/>"#,
+            ),
+            (
+                "palette",
+                r#"<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8Z"/><circle cx="7.5" cy="11" r="1.1"/><circle cx="10" cy="7" r="1.1"/><circle cx="14.5" cy="7" r="1.1"/>"#,
+            ),
+            (
+                "keyboard",
+                r#"<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M8 14h8" stroke-width="1.8"/>"#,
+            ),
+            (
+                "info",
+                r#"<circle cx="12" cy="12" r="9.5"/><path d="M12 11v5.5M12 7.6v.1" stroke-width="1.9"/>"#,
+            ),
+            ("timer", r#"<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M10 2.5h4"/>"#),
+            ("clock", r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#),
+            (
+                "panel",
+                r#"<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 15h10"/>"#,
+            ),
+            (
+                "sparkle",
+                r#"<path d="M11 3.5l1.8 5.2L18 10.5l-5.2 1.8L11 17.5l-1.8-5.2L4 10.5l5.2-1.8Z"/><path d="M19 15.5v5M16.5 18h5" stroke-width="1.3"/>"#,
+            ),
+            (
+                "image",
+                r#"<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.8"/><path d="m21 15-5-5L5 20"/>"#,
+            ),
+            ("forward", r#"<path d="M4 6.5v11l7-5.5Z"/><path d="M13 6.5v11l7-5.5Z"/>"#),
+            ("text", r#"<path d="M5 6h14M5 11h14M5 16h8"/>"#),
+            (
+                "shape",
+                r#"<rect x="3.5" y="3.5" width="10" height="10" rx="2"/><circle cx="15.5" cy="15.5" r="5"/>"#,
+            ),
+            ("refresh", r#"<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>"#),
+            ("check", r#"<path d="m5 12.5 4.5 4.5L19 7.5" stroke-width="2.2"/>"#),
         ];
         let mut glyphs = HashMap::new();
         for (name, path) in paths {

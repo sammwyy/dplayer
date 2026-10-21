@@ -5,6 +5,7 @@ pub const HELP: &str = "\
 Dplayer — native video and music player
 
 Usage: dplayer [FILE|DIRECTORY ...]
+       dplayer --settings
        dplayer --help | --version
 
 Directories are scanned for playable files. With no arguments the player
@@ -12,10 +13,11 @@ opens on its welcome screen; files can be added from there or with 'o'.
 
 Keyboard: space play/pause · ← → seek 5s (shift 30s) · ↑ ↓ volume ·
 f maximize · m mute · [ ] speed · n p next/prev · l repeat · s shuffle ·
-o open · q quit";
+o open · , settings · q quit";
 
 pub enum Launch {
     Play(Vec<PathBuf>),
+    Settings,
     Help,
     Version,
 }
@@ -63,6 +65,7 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Launch, String> {
             match text.as_ref() {
                 "-h" | "--help" => return Ok(Launch::Help),
                 "-V" | "--version" => return Ok(Launch::Version),
+                "--settings" => return Ok(Launch::Settings),
                 "--" => bare = true,
                 other => return Err(format!("unknown option '{other}' (try --help)")),
             }

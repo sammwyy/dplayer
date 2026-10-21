@@ -1,3 +1,4 @@
+use crate::config::{Config, RepeatMode};
 use crate::engine::{self, Engine, EngineEvent, MediaInfo};
 use crate::icons::Icons;
 use creamui_image::ImageData;
@@ -8,7 +9,10 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+
+/// Seconds the playback chrome takes to slide in or out.
+const CHROME_TRANSITION: f32 = 0.24;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Repeat {
@@ -59,7 +63,16 @@ pub struct PlayerState {
     pub controls_visible: Signal<bool>,
     pub frame: Signal<Option<ImageData>>,
     pub cover: Signal<Option<ImageData>>,
+    /// Small, pre-blurred copy of the cover art used as the audio backdrop.
+    pub backdrop: Signal<Option<ImageData>>,
     pub queue_scroll: ScrollController,
+    pub config: Signal<Config>,
+    /// Chrome slide progress: 0.0 fully hidden, 1.0 fully shown.
+    pub chrome_progress: Signal<f32>,
+    chrome_animating: Rc<Cell<bool>>,
+    chrome_last: Rc<Cell<Instant>>,
+    config_stamp: Rc<Cell<Option<SystemTime>>>,
+    ticks: Rc<Cell<u32>>,
 
     last_move: Rc<Cell<Instant>>,
     last_pos: Rc<Cell<(f32, f32)>>,
@@ -70,8 +83,13 @@ pub struct PlayerState {
 
 impl PlayerState {
     pub fn new(app: AppHandle) -> Self {
+        let config = Config::load();
+        let playback = config.playback.clone();
+        let engine = Engine::new();
+        engine.set_volume(playback.volume.clamp(0.0, 1.0));
+        engine.prime_speed(playback.speed);
         PlayerState {
-            engine: Rc::new(Engine::new()),
+            engine: Rc::new(engine),
             app,
             icons: Icons::load(),
             window: Rc::new(RefCell::new(None)),
@@ -84,15 +102,26 @@ impl PlayerState {
             position: Signal::new(0.0),
             duration: Signal::new(0.0),
             scrub: Signal::new(None),
-            volume: Signal::new(1.0),
+            volume: Signal::new(playback.volume.clamp(0.0, 1.0)),
             muted: Signal::new(false),
-            speed: Signal::new(1.0),
-            repeat: Signal::new(Repeat::Off),
-            shuffle: Signal::new(false),
+            speed: Signal::new(playback.speed),
+            repeat: Signal::new(match playback.repeat {
+                RepeatMode::Off => Repeat::Off,
+                RepeatMode::All => Repeat::All,
+                RepeatMode::One => Repeat::One,
+            }),
+            shuffle: Signal::new(playback.shuffle),
             queue_open: Signal::new(false),
             frame: Signal::new(None),
             cover: Signal::new(None),
+            backdrop: Signal::new(None),
             queue_scroll: ScrollController::new(0.0),
+            config: Signal::new(config),
+            chrome_progress: Signal::new(1.0),
+            chrome_animating: Rc::new(Cell::new(false)),
+            chrome_last: Rc::new(Cell::new(Instant::now())),
+            config_stamp: Rc::new(Cell::new(Config::modified())),
+            ticks: Rc::new(Cell::new(0)),
             controls_visible: Signal::new(true),
             last_move: Rc::new(Cell::new(Instant::now())),
             last_pos: Rc::new(Cell::new((0.0, 0.0))),
@@ -108,9 +137,7 @@ impl PlayerState {
 
     pub fn poke(&self) {
         self.last_move.set(Instant::now());
-        if !self.controls_visible.get() {
-            self.controls_visible.set(true);
-        }
+        self.set_chrome(true);
     }
 
     /// Ignores pointer deltas below 2 px because some Wayland compositors
@@ -122,8 +149,64 @@ impl PlayerState {
         }
         self.last_pos.set(pos);
         self.last_move.set(Instant::now());
-        if !self.controls_visible.get() {
-            self.controls_visible.set(true);
+        self.set_chrome(true);
+    }
+
+    fn set_chrome(&self, visible: bool) {
+        if self.controls_visible.peek() == visible {
+            return;
+        }
+        self.controls_visible.set(visible);
+        if !self.config.peek().interface.animations {
+            self.chrome_progress.set(if visible { 1.0 } else { 0.0 });
+            return;
+        }
+        if !self.chrome_animating.replace(true) {
+            self.chrome_last.set(Instant::now());
+            self.step_chrome();
+        }
+    }
+
+    /// Advances the chrome slide at roughly 60 fps until it reaches its target.
+    fn step_chrome(&self) {
+        let state = self.clone();
+        self.app.spawn_background(
+            || std::thread::sleep(Duration::from_millis(16)),
+            move |_| {
+                let now = Instant::now();
+                let dt = now.duration_since(state.chrome_last.replace(now)).as_secs_f32();
+                let target = if state.controls_visible.peek() { 1.0 } else { 0.0 };
+                let current = state.chrome_progress.peek();
+                let step = dt / CHROME_TRANSITION;
+                let next = if target > current {
+                    (current + step).min(target)
+                } else {
+                    (current - step).max(target)
+                };
+                state.chrome_progress.set(next);
+                if next == target {
+                    state.chrome_animating.set(false);
+                } else {
+                    state.step_chrome();
+                }
+            },
+        );
+    }
+
+    /// Picks up preferences saved by the settings window.
+    fn reload_config(&self) {
+        let stamp = Config::modified();
+        if stamp == self.config_stamp.get() {
+            return;
+        }
+        self.config_stamp.set(stamp);
+        let config = Config::load();
+        let accent_changed = config.appearance.accent != self.config.peek().appearance.accent;
+        self.config.set(config);
+        if accent_changed {
+            if let Some(window) = self.window.borrow().as_ref() {
+                window.set_theme(crate::app::load_theme());
+            }
         }
     }
 
@@ -138,7 +221,8 @@ impl PlayerState {
         {
             return true;
         }
-        self.last_move.get().elapsed() < Duration::from_secs(5)
+        let delay = self.config.peek().interface.autohide_delay.max(1);
+        self.last_move.get().elapsed() < Duration::from_secs(delay as u64)
     }
 
     fn next_load_token(&self) -> u64 {
@@ -191,14 +275,14 @@ impl PlayerState {
             move || {
                 engine::probe::probe(&path).map(|info| {
                     let cover = if info.attached_picture {
-                        engine::cover_art(&path)
+                        engine::cover_art(&path).and_then(|bytes| crate::artwork::decode(&bytes))
                     } else {
                         None
                     };
                     (info, cover)
                 })
             },
-            move |result| {
+            move |result| { 
                 if state.load_token.load(Ordering::Relaxed) != token {
                     return;
                 }
@@ -213,17 +297,19 @@ impl PlayerState {
         );
     }
 
-    fn start_media(&self, info: MediaInfo, cover: Option<Vec<u8>>) {
-        self.cover.set(
-            cover.and_then(|bytes| ImageData::from_bytes(&bytes).ok()),
-        );
-        match self.engine.start(&info, 0.0, false) {
+    fn start_media(&self, info: MediaInfo, cover: Option<crate::artwork::Artwork>) {
+        let (cover, backdrop) = cover.map(|art| art.into_images()).unwrap_or((None, None));
+        self.cover.set(cover);
+        self.backdrop.set(backdrop);
+        let autoplay = self.config.peek().playback.autoplay;
+        let r = self.engine.start(&info, 0.0, !autoplay);
+        match r {
             Ok(()) => {
                 self.duration.set(info.duration);
                 self.position.set(0.0);
                 self.media.set(Some(info));
                 self.status.set(Status::Playing);
-                self.playing.set(true);
+                self.playing.set(autoplay);
             }
             Err(error) => {
                 self.media.set(None);
@@ -238,6 +324,7 @@ impl PlayerState {
         self.engine.stop();
         self.frame.set(None);
         self.cover.set(None);
+        self.backdrop.set(None);
         self.position.set(0.0);
         self.duration.set(0.0);
         self.scrub.set(None);
@@ -471,7 +558,13 @@ impl PlayerState {
     }
 
     fn tick(&self) {
-        self.controls_visible.set_if_changed(self.chrome_visible());
+        let ticks = self.ticks.get().wrapping_add(1);
+        self.ticks.set(ticks);
+        if ticks % 10 == 0 {
+            self.reload_config();
+        }
+
+        self.set_chrome(self.chrome_visible());
         if self.status.get() != Status::Playing {
             return;
         }

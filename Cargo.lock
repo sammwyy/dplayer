@@ -771,11 +771,13 @@ dependencies = [
  "creamui-theme-loader",
  "creamui-theme-watch",
  "creamui-widgets",
+ "delib",
  "libc",
  "rfd",
  "rodio",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

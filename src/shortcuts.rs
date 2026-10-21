@@ -6,7 +6,12 @@ impl PlayerState {
         if !event.pressed || event.synthetic || modifiers.ctrl {
             return false;
         }
-        let seek = if modifiers.shift { 30.0 } else { 5.0 };
+        let playback = self.config.peek().playback;
+        let seek = if modifiers.shift {
+            playback.seek_step_long
+        } else {
+            playback.seek_step
+        } as f64;
         match &event.key {
             Key::Space => self.toggle(),
             Key::Left => self.seek_by(-seek),
@@ -44,6 +49,8 @@ impl PlayerState {
                     self.open_dialog();
                 } else if ch.eq_ignore_ascii_case("t") {
                     self.queue_open.set(!self.queue_open.get());
+                } else if ch == "," {
+                    crate::app::open_settings();
                 } else if ch.eq_ignore_ascii_case("q") {
                     if let Some(handle) = self.window.borrow().as_ref() {
                         handle.close();

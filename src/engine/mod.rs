@@ -278,6 +278,11 @@ impl Engine {
         let _ = self.spawn_session(info.clone(), pos.max(0.0), speed, paused);
     }
 
+    /// Sets the rate used by the next session without spawning one.
+    pub fn prime_speed(&self, speed: f32) {
+        self.inner.lock().unwrap().speed = speed;
+    }
+
     pub fn speed(&self) -> f32 {
         self.inner.lock().unwrap().speed
     }

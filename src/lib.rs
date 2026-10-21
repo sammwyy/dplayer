@@ -1,10 +1,15 @@
+mod about;
 pub mod app;
+mod artwork;
 pub mod backends;
 pub mod cli;
 mod components;
+pub mod config;
 mod engine;
 mod icons;
+mod settings;
 mod shortcuts;
+pub mod snap;
 mod state;
 mod views;
 

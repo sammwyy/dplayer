@@ -32,7 +32,10 @@ fn seekbar(p: &PlayerState) -> BoxedWidget {
                 },
                 ..row(0.0)
             })
-            .background(Color::rgba(255, 255, 255, 38))
+            .background(Color {
+                a: 46,
+                ..t.colors.text_primary
+            })
             .corner_radius(2.5)
             .child(Box::new(
                 RawView::new(Style {
@@ -147,240 +150,267 @@ fn play_button(p: &PlayerState) -> BoxedWidget {
     )
 }
 
-pub fn build(p: &PlayerState) -> BoxedWidget {
+/// Distance the bar travels when it slides out below the window.
+const SLIDE: f32 = 140.0;
+
+fn time_label(text: String, end: bool) -> BoxedWidget {
+    view(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Length(50.0),
+                height: Dimension::Auto,
+            },
+            flex_shrink: 0.0,
+            justify_content: Some(if end {
+                JustifyContent::End
+            } else {
+                JustifyContent::Start
+            }),
+            ..row(0.0)
+        },
+        vec![label(text, 11.5, true)],
+    )
+}
+
+fn ellipsize(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        format!("{}…", text.chars().take(max - 1).collect::<String>().trim_end())
+    }
+}
+
+fn info(p: &PlayerState) -> BoxedWidget {
+    let show_details = p.config.get().interface.show_details;
+    let Some(media) = p.media.get() else {
+        return if p.status.get() == Status::Loading {
+            label("Loading…", 12.0, true)
+        } else {
+            view(row(0.0), vec![])
+        };
+    };
+    let mut lines = vec![Box::new(Text::new(ellipsize(&media.title, 48)).font_size(12.5)) as BoxedWidget];
+    let mut detail: Vec<String> = Vec::new();
+    if media.has_video {
+        if let Some(artist) = &media.artist {
+            detail.push(artist.clone());
+        }
+        if show_details {
+            detail.push(format!("{} · {}×{}", media.video_codec, media.width, media.height));
+        }
+    } else {
+        detail.extend(media.artist.iter().cloned());
+        detail.extend(media.album.iter().cloned());
+        if show_details && !media.audio_codec.is_empty() {
+            detail.push(media.audio_codec.to_uppercase());
+        }
+    }
+    if !detail.is_empty() {
+        lines.push(label(ellipsize(&detail.join(" · "), 60), 10.5, true));
+    }
+    view(
+        Style {
+            flex_grow: 1.0,
+            flex_basis: Dimension::Length(0.0),
+            align_items: Some(AlignItems::Start),
+            padding: creamui_core::layout::Rect {
+                left: LengthPercentage::Length(10.0),
+                right: LengthPercentage::Length(6.0),
+                top: LengthPercentage::Length(0.0),
+                bottom: LengthPercentage::Length(0.0),
+            },
+            ..column(2.0)
+        },
+        lines,
+    )
+}
+
+pub fn build(p: &PlayerState, reveal: f32) -> BoxedWidget {
     let t = use_theme();
+    let config = p.config.get();
     let duration = p.duration.get();
     let position = p.shown_position();
-
-    let seek_row = view(row(10.0), vec![
-        view(
-            Style {
-                size: creamui_core::layout::Size {
-                    width: Dimension::Length(46.0),
-                    height: Dimension::Auto,
-                },
-                flex_shrink: 0.0,
-                ..row(0.0)
-            },
-            vec![label(format_time(position), 11.5, true)],
-        ),
-        seekbar(p),
-        view(
-            Style {
-                size: creamui_core::layout::Size {
-                    width: Dimension::Length(46.0),
-                    height: Dimension::Auto,
-                },
-                flex_shrink: 0.0,
-                justify_content: Some(JustifyContent::End),
-                ..row(0.0)
-            },
-            vec![label(format_time(duration), 11.5, true)],
-        ),
-    ]);
-
-    let mut left: Vec<BoxedWidget> = vec![
-        {
-            let p = p.clone();
-            let active = p.shuffle.get();
-            icon_button(&p, "shuffle", active, {
-                let p = p.clone();
-                move || p.toggle_shuffle()
-            })
-        },
-        {
-            let p = p.clone();
-            icon_button(&p, "prev", false, {
-                let p = p.clone();
-                move || p.prev()
-            })
-        },
-        play_button(p),
-        {
-            let p = p.clone();
-            icon_button(&p, "next", false, {
-                let p = p.clone();
-                move || {
-                    p.advance(true);
-                }
-            })
-        },
-        {
-            let p = p.clone();
-            let repeat = p.repeat.get();
-            let icon = if repeat == Repeat::One {
-                "repeat-one"
-            } else {
-                "repeat"
-            };
-            icon_button(&p, icon, repeat != Repeat::Off, {
-                let p = p.clone();
-                move || p.cycle_repeat()
-            })
-        },
-    ];
-
-    let info: BoxedWidget = match (p.media.get(), p.status.get()) {
-        (Some(media), _) => {
-            let mut lines = vec![Box::new(
-                Text::new(media.title.clone()).font_size(12.5),
-            ) as BoxedWidget];
-            let mut detail = String::new();
-            if media.has_video {
-                detail.push_str(&media.video_codec);
-                detail.push_str(&format!(" · {}×{}", media.width, media.height));
-            }
-            if !media.audio_codec.is_empty() {
-                if !detail.is_empty() {
-                    detail.push_str(" · ");
-                }
-                detail.push_str(&media.audio_codec);
-            }
-            if let Some(artist) = &media.artist {
-                detail.push_str(&format!(" · {artist}"));
-            }
-            if let Some(album) = &media.album {
-                detail.push_str(&format!(" · {album}"));
-            }
-            if !detail.is_empty() {
-                lines.push(label(detail, 10.5, true));
-            }
-            view(
-                pad(
-                    Style {
-                        align_items: Some(AlignItems::Start),
-                        ..column(1.0)
-                    },
-                    10.0,
-                    0.0,
-                ),
-                lines,
-            )
+    let end_time = match config.interface.time_display {
+        crate::config::TimeDisplay::Total => format_time(duration),
+        crate::config::TimeDisplay::Remaining => {
+            format!("-{}", format_time((duration - position).max(0.0)))
         }
-        (None, Status::Loading) => label("Loading…", 12.0, true),
-        _ => view(row(0.0), vec![]),
+    };
+    let seek_row = view(
+        row(10.0),
+        vec![
+            time_label(format_time(position), false),
+            seekbar(p),
+            time_label(end_time, true),
+        ],
+    );
+
+    let shuffle = {
+        let p2 = p.clone();
+        icon_button(p, "shuffle", p.shuffle.get(), move || p2.toggle_shuffle())
+    };
+    let prev = {
+        let p2 = p.clone();
+        icon_button(p, "prev", false, move || p2.prev())
+    };
+    let next = {
+        let p2 = p.clone();
+        icon_button(p, "next", false, move || {
+            p2.advance(true);
+        })
+    };
+    let repeat = {
+        let p2 = p.clone();
+        let mode = p.repeat.get();
+        let icon = if mode == Repeat::One { "repeat-one" } else { "repeat" };
+        icon_button(p, icon, mode != Repeat::Off, move || p2.cycle_repeat())
+    };
+    let open = {
+        let p2 = p.clone();
+        icon_button(p, "open", false, move || p2.open_dialog())
+    };
+    let queue = {
+        let p2 = p.clone();
+        icon_button(p, "queue", p.queue_open.get(), move || {
+            p2.queue_open.set(!p2.queue_open.get())
+        })
+    };
+    let speed = {
+        let p2 = p.clone();
+        let speed = p.speed.get();
+        Box::new(
+            RawButton::new(
+                Style {
+                    justify_content: Some(JustifyContent::Center),
+                    ..fixed(44.0, 30.0)
+                },
+                move || p2.cycle_speed(true),
+            )
+            .keyboard_focus(false)
+            .corner_radius(8.0)
+            .hover_style(StateStyle::new().background(t.colors.surface_hover))
+            .child(Box::new(
+                Text::new(format!("{}×", speed))
+                    .font_size(11.5)
+                    .color(if (speed - 1.0).abs() > 0.001 {
+                        t.colors.accent
+                    } else {
+                        t.colors.text_secondary
+                    }),
+            )),
+        ) as BoxedWidget
+    };
+    let mute = {
+        let p2 = p.clone();
+        let muted = p.muted.get() || !p.engine.has_audio_output();
+        icon_button(p, if muted { "mute" } else { "volume" }, muted, move || {
+            p2.toggle_mute()
+        })
+    };
+    let volume = {
+        let p2 = p.clone();
+        Box::new(
+            RawSlider::new(
+                Style {
+                    size: creamui_core::layout::Size {
+                        width: Dimension::Length(80.0),
+                        height: Dimension::Length(30.0),
+                    },
+                    flex_shrink: 0.0,
+                    ..row(0.0)
+                },
+                p.volume.get(),
+                Color {
+                    a: 46,
+                    ..t.colors.text_primary
+                },
+                t.colors.accent,
+                t.colors.text_primary,
+                move |v| p2.set_volume(v),
+            )
+            .track(4.0, 2.0)
+            .handle(11.0, 5.5),
+        ) as BoxedWidget
     };
 
-    let right: Vec<BoxedWidget> = vec![
-        {
-            let p = p.clone();
-            icon_button(&p, "open", false, {
-                let p = p.clone();
-                move || p.open_dialog()
-            })
-        },
-        {
-            let p = p.clone();
-            let open = p.queue_open.get();
-            icon_button(&p, "queue", open, {
-                let p = p.clone();
-                move || {
-                    p.queue_open.set(!p.queue_open.get());
-                }
-            })
-        },
-        {
-            let p = p.clone();
-            let speed = p.speed.get();
-            let p2 = p.clone();
-            Box::new(
-                RawButton::new(
-                    pad(
-                        Style {
-                            justify_content: Some(JustifyContent::Center),
-                            ..fixed(46.0, 30.0)
-                        },
-                        0.0,
-                        0.0,
-                    ),
-                    move || p2.cycle_speed(true),
-                )
-                .keyboard_focus(false)
-                .corner_radius(8.0)
-                .hover_style(StateStyle::new().background(t.colors.surface_hover))
-                .child(Box::new(
-                    Text::new(format!("{}×", speed))
-                        .font_size(11.5)
-                        .color(if (speed - 1.0).abs() > 0.001 {
-                            t.colors.accent
-                        } else {
-                            t.colors.text_secondary
-                        }),
-                )),
-            ) as BoxedWidget
-        },
-        {
-            let p = p.clone();
-            let has_audio = p.engine.has_audio_output();
-            let muted = p.muted.get() || !has_audio;
-            icon_button(&p, if muted { "mute" } else { "volume" }, muted, {
-                let p = p.clone();
-                move || p.toggle_mute()
-            })
-        },
-        {
-            let p = p.clone();
-            Box::new(
-                RawSlider::new(
-                    Style {
-                        size: creamui_core::layout::Size {
-                            width: Dimension::Length(84.0),
-                            height: Dimension::Length(30.0),
-                        },
-                        flex_shrink: 0.0,
-                        ..row(0.0)
-                    },
-                    p.volume.get(),
-                    t.colors.surface_hover,
-                    t.colors.accent,
-                    t.colors.text_primary,
-                    move |v| p.set_volume(v),
-                )
-                .track(4.0, 2.0)
-                .handle(11.0, 5.5),
-            ) as BoxedWidget
-        },
-    ];
+    let transport = view(
+        row(4.0),
+        vec![
+            view(
+                Style {
+                    flex_shrink: 0.0,
+                    ..row(4.0)
+                },
+                vec![shuffle, prev, play_button(p), next, repeat],
+            ),
+            info(p),
+            view(
+                Style {
+                    flex_shrink: 0.0,
+                    justify_content: Some(JustifyContent::End),
+                    ..row(4.0)
+                },
+                vec![open, queue, speed, mute, volume],
+            ),
+        ],
+    );
 
-    let transport = view(row(6.0), {
-        let mut row_children = left.split_off(0);
-        row_children.push(info);
-        row_children.push(view(
-            Style {
-                flex_grow: 1.0,
-                flex_basis: Dimension::Length(0.0),
-                justify_content: Some(JustifyContent::End),
-                ..row(6.0)
+    let elevated = t.colors.surface_elevated;
+    let (background, border) = match config.appearance.bar_style {
+        crate::config::BarStyle::Floating => (
+            Color { a: 214, ..elevated },
+            Color {
+                a: 40,
+                ..t.colors.text_primary
             },
-            right,
-        ));
-        row_children
-    });
+        ),
+        crate::config::BarStyle::Solid => (elevated, t.colors.border),
+    };
+    let bar = RawButton::new(
+        Style {
+            size: creamui_core::layout::Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Auto,
+            },
+            max_size: creamui_core::layout::Size {
+                width: Dimension::Length(config.interface.controls_width.max_width()),
+                height: Dimension::Auto,
+            },
+            padding: creamui_core::layout::Rect {
+                left: LengthPercentage::Length(14.0),
+                right: LengthPercentage::Length(12.0),
+                top: LengthPercentage::Length(10.0),
+                bottom: LengthPercentage::Length(10.0),
+            },
+            ..column(6.0)
+        },
+        || {},
+    )
+    .keyboard_focus(false)
+    .background(background)
+    .corner_radius(16.0)
+    .border(border, 1.0)
+    .box_shadow(creamui_core::BoxShadow::new(
+        0.0,
+        12.0,
+        32.0,
+        -12.0,
+        Color::rgba(0, 0, 0, 150),
+    ))
+    .with_children(vec![seek_row, transport]);
 
-    Box::new(
-        RawButton::new(
-            Style {
-                position: creamui_core::layout::Position::Absolute,
+    view(
+        Style {
+            position: creamui_core::layout::Position::Absolute,
             inset: creamui_core::layout::Rect {
                 left: LengthPercentageAuto::Length(16.0),
                 right: LengthPercentageAuto::Length(16.0),
-                bottom: LengthPercentageAuto::Length(14.0),
+                bottom: LengthPercentageAuto::Length(16.0 - (1.0 - reveal) * SLIDE),
                 top: LengthPercentageAuto::Auto,
             },
-            padding: creamui_core::layout::Rect {
-                left: LengthPercentage::Length(12.0),
-                right: LengthPercentage::Length(12.0),
-                top: LengthPercentage::Length(9.0),
-                bottom: LengthPercentage::Length(9.0),
-            },
-            ..column(6.0)
-            },
-            || {},
-        )
-        .keyboard_focus(false)
-        .background(t.colors.surface_elevated.mix(Color::rgba(8, 8, 10, 255), 0.45))
-        .corner_radius(14.0)
-        .border(Color::rgba(255, 255, 255, 26), 1.0)
-        .with_children(vec![seek_row, transport]),
+            justify_content: Some(JustifyContent::Center),
+            ..row(0.0)
+        },
+        vec![Box::new(bar)],
     )
 }

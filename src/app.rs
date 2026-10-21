@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::state::PlayerState;
 use creamui_render::{AppBuilder, AppHandle, BlurRegion, WindowHandle, WindowOptions};
 use creamui_theme::{Color, Theme};
@@ -16,7 +17,7 @@ pub fn run(paths: Vec<PathBuf>) {
         transparent: true,
         decorations: true,
         blur: Some(BlurRegion::Window),
-        theme: load_system_theme(),
+        theme: load_theme(),
         ..Default::default()
     };
     let theme_events = Arc::new(Mutex::new(ThemeListener::start()));
@@ -61,7 +62,63 @@ pub fn run(paths: Vec<PathBuf>) {
         .run();
 }
 
-fn load_system_theme() -> Theme {
+/// Opens the player preferences in their own window (`dplayer --settings`).
+pub fn show_settings() {
+    crate::backends::init_env();
+    let settings = crate::settings::State::load();
+    if crate::snap::enabled() {
+        crate::settings::snapshots(&settings);
+        return;
+    }
+    let window = settings.window.clone();
+    let options = WindowOptions {
+        title: "Media Player Settings".into(),
+        width: 780,
+        height: 600,
+        transparent: true,
+        decorations: true,
+        blur: Some(BlurRegion::Window),
+        theme: load_theme(),
+        ..Default::default()
+    };
+    let theme_events = Arc::new(Mutex::new(ThemeListener::start()));
+    AppBuilder::new()
+        .on_started(move |app| {
+            let ready_window = window.clone();
+            app.append_window(
+                options,
+                Color::rgba(0, 0, 0, 0),
+                move |handle| {
+                    crate::views::chrome::request_hybrid(&handle);
+                    *ready_window.borrow_mut() = Some(handle);
+                },
+                move |size| crate::settings::build(&settings, size),
+            );
+            watch_theme_reloads(app, theme_events, window);
+        })
+        .run();
+}
+
+/// Spawns the settings window as a separate instance of this binary.
+pub fn open_settings() {
+    match std::env::current_exe()
+        .and_then(|exe| std::process::Command::new(exe).arg("--settings").spawn())
+    {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(error) => eprintln!("dplayer: couldn't open settings: {error}"),
+    }
+}
+
+/// The system theme with the user's accent preference applied.
+pub(crate) fn load_theme() -> Theme {
+    Config::load().appearance.accent.apply(load_system_theme())
+}
+
+pub(crate) fn load_system_theme() -> Theme {
     match creamui_theme_loader::SystemThemeLoader::new().load() {
         Ok(appearance) => {
             if let Some(font_family) = &appearance.font_family {
@@ -89,7 +146,7 @@ fn watch_theme_reloads(
         move |changed| {
             if changed {
                 if let Some(window) = window.borrow().as_ref() {
-                    window.set_theme(load_system_theme());
+                    window.set_theme(load_theme());
                 }
                 watch_theme_reloads(next_app, next_listener, next_window);
             }
