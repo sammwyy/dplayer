@@ -29,11 +29,11 @@ A native video and music player for Linux, built on
   `n`/`p` next/previous · `l` repeat · `s` shuffle · `t` queue ·
   `o` open · `,` settings · `q`/`Esc` quit.
 - Settings window (`dplayer --settings`, or the gear in the top-left corner):
-  startup volume / speed / repeat / shuffle, autoplay, seek steps, controls
-  auto-hide delay, animations, bar width and style, accent color (automatic,
-  system or a preset), music
-  background and cover shape. Stored in `~/.config/dplayer/config.toml` and
-  applied live to open players.
+  available playback backends, startup volume / speed / repeat / shuffle,
+  autoplay, seek steps, controls auto-hide delay, animations, bar width and
+  style, accent color (automatic, system or a preset), music background and
+  cover shape. Stored in `~/.config/dplayer/config.toml` and applied live to
+  open players.
 
 ## Usage
 
@@ -47,15 +47,33 @@ arguments the player opens on a welcome screen.
 
 ## Architecture
 
-All decoding is delegated to `ffmpeg`/`ffprobe` **subprocesses** — the
-binary has no codec dependencies and any ffmpeg build supports every
-format:
+`ffprobe` reads stream metadata. Playback selects a backend at runtime:
+
+- **libmpv** (when `libmpv.so.2`/`.so.1` is installed on Linux or
+  `mpv-2.dll`/`libmpv-2.dll` is next to the executable on Windows): one
+  persistent player per track. Seek, rate, pause and volume update that
+  player without reopening the file. libmpv handles audio output; its
+  software render API sends RGB frames to CreamUI. This removes process
+  restarts but does **not** yet provide GPU texture interop or hardware video
+  output; software rendering can be slower for large videos.
+- **FFmpeg subprocess** fallback when libmpv is unavailable. It decodes
+  audio for Rodio and video into raw frames:
 
 ```
 ffprobe ── JSON metadata (streams, duration, tags)
 ffmpeg  ── video: -f rawvideo rgba  → fd 3 → ImageData → creamui Image
         └─ audio: -f f32le 48kHz    → fd 4 → rodio Player → default device
 ```
+
+The Playback settings show only detected backends and save the choice.
+Changing it while a track is open prepares the new backend in the background
+and resumes from the current position. If the saved backend disappears, the
+player tries the other one. `DPLAYER_BACKEND=ffmpeg` overrides the setting to
+force the fallback; `DPLAYER_BACKEND=mpv` requires libmpv and reports an error
+if it cannot initialize. Neither library is linked into the executable at build time.
+The FFmpeg backend still requires `ffmpeg` and `ffprobe` executables.
+
+On the FFmpeg fallback:
 
 - `-readrate N` paces demuxing and playback speed adds `atempo=N`.
   Raw video frames do not carry timestamps through the pipe, so this
@@ -79,8 +97,9 @@ install -Dm755 target/release/dplayer /usr/bin/dplayer
 install -Dm644 data/dplayer.desktop /usr/share/applications/dplayer.desktop
 ```
 
-Runtime requirements: `ffmpeg`, `ffprobe`, and a working audio output
-(ALSA/PipeWire/PulseAudio via `rodio`). Linux builds link `libdbus-1` for
+Runtime requirements: `ffprobe` and either a working libmpv installation or
+`ffmpeg` plus a working audio output (ALSA/PipeWire/PulseAudio via `rodio`).
+Linux builds link `libdbus-1` for
 MPRIS (`dbus-devel` / `libdbus-1-dev` at build time).
 
 ## Roadmap

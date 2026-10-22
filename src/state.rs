@@ -97,6 +97,7 @@ impl PlayerState {
         let engine = Engine::new();
         engine.set_volume(playback.volume.clamp(0.0, 1.0));
         engine.prime_speed(playback.speed);
+        engine.set_backend(playback.backend);
         PlayerState {
             engine: Rc::new(engine),
             app,
@@ -222,9 +223,16 @@ impl PlayerState {
         self.config_stamp.set(stamp);
         let config = Config::load();
         let accent_changed = config.appearance.accent != self.config.peek().appearance.accent;
+        let backend_changed = config.playback.backend != self.config.peek().playback.backend;
+        self.engine.set_backend(config.playback.backend);
         self.config.set(config);
         if accent_changed {
             self.apply_theme();
+        }
+        if backend_changed {
+            if let Some(media) = self.media.peek() {
+                self.restart(media, self.current_position(), self.speed.peek());
+            }
         }
     }
 
@@ -435,6 +443,10 @@ impl PlayerState {
             },
         );
         self.position.set(pos);
+        if self.engine.seek_live(pos) {
+            self.announce_seek(pos);
+            return;
+        }
         self.restart(media, pos, self.speed.peek());
         self.announce_seek(pos);
     }
@@ -535,7 +547,9 @@ impl PlayerState {
         let speed = speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1]);
         self.speed.set(speed);
         if let Some(media) = self.media.get() {
-            self.restart(media, self.current_position(), speed);
+            if !self.engine.set_speed_live(speed) {
+                self.restart(media, self.current_position(), speed);
+            }
         } else {
             self.engine.prime_speed(speed);
         }

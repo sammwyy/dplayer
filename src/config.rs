@@ -15,6 +15,7 @@ pub struct Config {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct PlaybackConfig {
+    pub backend: PlaybackBackend,
     /// Volume used when the player starts, from 0.0 to 1.0.
     pub volume: f32,
     /// Playback rate applied when the player starts.
@@ -27,6 +28,15 @@ pub struct PlaybackConfig {
     pub seek_step: u32,
     /// Seconds skipped by Shift+← and Shift+→.
     pub seek_step_long: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackBackend {
+    #[default]
+    Auto,
+    Mpv,
+    Ffmpeg,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -212,6 +222,7 @@ fn with_accent(mut theme: Theme, accent: Color) -> Theme {
 impl Default for PlaybackConfig {
     fn default() -> Self {
         Self {
+            backend: PlaybackBackend::Auto,
             volume: 1.0,
             speed: 1.0,
             repeat: RepeatMode::Off,
@@ -308,5 +319,14 @@ mod tests {
         assert_eq!(config.playback.seek_step, 10);
         assert_eq!(config.playback.seek_step_long, 30);
         assert!(config.interface.animations);
+        assert_eq!(config.playback.backend, PlaybackBackend::Auto);
+    }
+
+    #[test]
+    fn playback_backend_round_trips_and_preserves_old_config() {
+        let config: Config = toml::from_str("[playback]\nbackend = \"mpv\"\n").unwrap();
+        assert_eq!(config.playback.backend, PlaybackBackend::Mpv);
+        let saved = toml::to_string(&config).unwrap();
+        assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
     }
 }

@@ -1,18 +1,67 @@
 mod audio;
 mod decode;
+mod mpv;
 pub(crate) mod probe;
 
+use crate::config::PlaybackBackend;
 pub use audio::{AudioClock, AudioOutput};
 pub use decode::{DecodeSession, EngineEvent, VideoFrame};
+use mpv::{MpvPlayback, MpvSession};
 pub use probe::MediaInfo;
 
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub use decode::{AUDIO_CHANNELS, AUDIO_RATE};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AvailableBackends {
+    pub mpv: bool,
+    pub ffmpeg: bool,
+}
+
+impl AvailableBackends {
+    pub fn detect() -> Self {
+        let installed = |program| {
+            crate::backends::background_command(program)
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        if !installed("ffprobe") {
+            return Self::default();
+        }
+        Self {
+            mpv: mpv::available(),
+            ffmpeg: installed("ffmpeg"),
+        }
+    }
+
+    pub fn choices(self) -> Vec<PlaybackBackend> {
+        let mut choices = Vec::new();
+        if self.mpv {
+            choices.push(PlaybackBackend::Mpv);
+        }
+        if self.ffmpeg {
+            choices.push(PlaybackBackend::Ffmpeg);
+        }
+        choices
+    }
+
+    pub fn effective(self, preferred: PlaybackBackend) -> Option<PlaybackBackend> {
+        match preferred {
+            PlaybackBackend::Mpv if self.mpv => Some(PlaybackBackend::Mpv),
+            PlaybackBackend::Ffmpeg if self.ffmpeg => Some(PlaybackBackend::Ffmpeg),
+            _ => self.choices().into_iter().next(),
+        }
+    }
+}
 
 /// Extracts the first attached picture stream from `path` as PNG bytes.
 pub fn cover_art(path: &std::path::Path) -> Option<Vec<u8>> {
@@ -41,11 +90,13 @@ pub fn cover_art(path: &std::path::Path) -> Option<Vec<u8>> {
 }
 
 struct Inner {
-    session: Option<DecodeSession>,
+    session: Option<PlaybackSession>,
+    backend: PlaybackBackend,
     clock: AudioClock,
     /// Media timestamp (in seconds) at which the current decode session started.
     base: f64,
     speed: f32,
+    volume: f32,
     paused: bool,
     has_audio: bool,
     has_video: bool,
@@ -63,19 +114,27 @@ struct Inner {
     generation: u64,
 }
 
+enum PlaybackSession {
+    Ffmpeg(DecodeSession),
+    Mpv(MpvSession),
+}
+
 pub struct RestartRequest {
     info: MediaInfo,
+    backend: PlaybackBackend,
     pos: f64,
     speed: f32,
     generation: u64,
     latest: Arc<AtomicU64>,
     audio: bool,
+    paused: bool,
+    volume: f32,
     events_tx: Sender<EngineEvent>,
     video_tx: SyncSender<(u64, VideoFrame)>,
 }
 
 pub struct PreparedSession {
-    session: DecodeSession,
+    session: PlaybackSession,
     info: MediaInfo,
     pos: f64,
     speed: f32,
@@ -91,19 +150,59 @@ impl RestartRequest {
         if self.info.has_video && (out_w == 0 || out_h == 0) {
             return Err("video stream has no usable dimensions".into());
         }
-        let session = DecodeSession::spawn(
-            &self.info.path,
-            self.pos,
-            self.speed,
-            self.info.video_stream,
-            self.info.audio_stream.filter(|_| self.audio),
-            out_w,
-            out_h,
-            self.events_tx,
-            self.video_tx,
-            self.generation,
-        )
-        .map_err(|e| format!("could not start ffmpeg: {e}"))?;
+        let override_backend = match std::env::var("DPLAYER_BACKEND").as_deref() {
+            Ok("mpv") => Some(PlaybackBackend::Mpv),
+            Ok("ffmpeg") => Some(PlaybackBackend::Ffmpeg),
+            _ => None,
+        };
+        let preference = override_backend.unwrap_or(self.backend);
+        let open_mpv = || {
+            MpvSession::open(
+                &self.info.path,
+                (out_w, out_h),
+                MpvPlayback {
+                    pos: self.pos,
+                    speed: self.speed,
+                    paused: self.paused,
+                    volume: self.volume,
+                },
+                self.events_tx.clone(),
+                self.video_tx.clone(),
+                self.generation,
+            )
+        };
+        let mpv = (preference != PlaybackBackend::Ffmpeg)
+            .then(&open_mpv)
+            .flatten();
+        if override_backend == Some(PlaybackBackend::Mpv) && mpv.is_none() {
+            return Err("libmpv unavailable or could not initialize its renderer".into());
+        }
+        let session = if let Some(mpv) = mpv {
+            PlaybackSession::Mpv(mpv)
+        } else {
+            match DecodeSession::spawn(
+                &self.info.path,
+                self.pos,
+                self.speed,
+                self.info.video_stream,
+                self.info.audio_stream.filter(|_| self.audio),
+                out_w,
+                out_h,
+                self.events_tx.clone(),
+                self.video_tx.clone(),
+                self.generation,
+            ) {
+                Ok(session) => PlaybackSession::Ffmpeg(session),
+                Err(error)
+                    if override_backend.is_none() && preference == PlaybackBackend::Ffmpeg =>
+                {
+                    PlaybackSession::Mpv(open_mpv().ok_or_else(|| {
+                        format!("could not start ffmpeg: {error}; libmpv unavailable")
+                    })?)
+                }
+                Err(error) => return Err(format!("could not start ffmpeg: {error}")),
+            }
+        };
         let prepared = PreparedSession {
             session,
             info: self.info,
@@ -141,9 +240,11 @@ impl Engine {
             latest: Arc::new(AtomicU64::new(0)),
             inner: Mutex::new(Inner {
                 session: None,
+                backend: PlaybackBackend::Auto,
                 clock: AudioClock::default(),
                 base: 0.0,
                 speed: 1.0,
+                volume: 1.0,
                 paused: false,
                 has_audio: false,
                 has_video: false,
@@ -176,7 +277,10 @@ impl Engine {
             while rx.try_recv().is_ok() {}
         }
         RestartRequest {
+            backend: inner.backend,
             audio: info.has_audio && self.audio.is_some(),
+            paused: inner.paused,
+            volume: inner.volume,
             info,
             pos,
             speed,
@@ -203,26 +307,39 @@ impl Engine {
         }
         let paused = initial_paused.unwrap_or(inner.paused);
         inner.session = None;
-        if let Some(player) = self.audio.as_ref() {
-            if let Some(rx) = session.audio_rx.take() {
-                inner.clock = player.play_stream(rx);
-                if !paused {
-                    player.player.play();
+        let mpv = matches!(session, PlaybackSession::Mpv(_));
+        match &mut session {
+            PlaybackSession::Ffmpeg(session) => {
+                if let Some(player) = self.audio.as_ref() {
+                    if let Some(rx) = session.audio_rx.take() {
+                        inner.clock = player.play_stream(rx);
+                        if !paused {
+                            player.player.play();
+                        }
+                    } else {
+                        player.player.stop();
+                        inner.clock = AudioClock::default();
+                    }
                 }
-            } else {
-                player.player.stop();
-                inner.clock = AudioClock::default();
+                if paused {
+                    session.suspend();
+                }
             }
-        }
-        if paused {
-            session.suspend();
+            PlaybackSession::Mpv(session) => {
+                if let Some(player) = &self.audio {
+                    player.player.stop();
+                }
+                inner.clock = AudioClock::default();
+                session.pause(paused);
+                session.volume(inner.volume);
+            }
         }
 
         inner.session = Some(session);
         inner.base = pos;
         inner.speed = speed;
         inner.paused = paused;
-        inner.has_audio = info.has_audio && self.audio.is_some();
+        inner.has_audio = info.has_audio && (mpv || self.audio.is_some());
         inner.has_video = info.has_video;
         inner.path = info.path;
         inner.out_w = out_w;
@@ -257,15 +374,20 @@ impl Engine {
         }
         inner.paused = paused;
         if let Some(session) = &inner.session {
-            if paused {
-                if let Some(player) = &self.audio {
-                    player.player.pause();
-                }
-                session.suspend();
-            } else {
-                session.resume();
-                if let Some(player) = &self.audio {
-                    player.player.play();
+            match session {
+                PlaybackSession::Mpv(session) => session.pause(paused),
+                PlaybackSession::Ffmpeg(session) => {
+                    if paused {
+                        if let Some(player) = &self.audio {
+                            player.player.pause();
+                        }
+                        session.suspend();
+                    } else {
+                        session.resume();
+                        if let Some(player) = &self.audio {
+                            player.player.play();
+                        }
+                    }
                 }
             }
         }
@@ -282,6 +404,9 @@ impl Engine {
         let inner = self.inner.lock().unwrap();
         if inner.session.is_none() {
             return inner.base;
+        }
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            return session.position();
         }
         let elapsed = if inner.has_audio {
             let samples = inner.clock.played.load(Ordering::Relaxed) as f64;
@@ -302,10 +427,12 @@ impl Engine {
         if inner.session.is_none() {
             return false;
         }
-        if inner.has_audio {
-            inner.clock.drained.load(Ordering::Relaxed)
+        if matches!(inner.session.as_ref(), Some(PlaybackSession::Mpv(_))) {
+            inner.exited && inner.exit_code == 0
+        } else if inner.has_audio {
+            inner.clock.drained.load(Ordering::Relaxed) && (!inner.exited || inner.exit_code == 0)
         } else {
-            inner.exited
+            inner.exited && inner.exit_code == 0
         }
     }
 
@@ -330,7 +457,39 @@ impl Engine {
         self.inner.lock().unwrap().speed = speed;
     }
 
+    pub fn set_backend(&self, backend: PlaybackBackend) {
+        self.inner.lock().unwrap().backend = backend;
+    }
+
+    pub fn seek_live(&self, pos: f64) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            session.seek(pos);
+            inner.exited = false;
+            inner.base = pos;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_speed_live(&self, speed: f32) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            session.speed(speed);
+            inner.speed = speed;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn set_volume(&self, volume: f32) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.volume = volume.max(0.0);
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            session.volume(inner.volume);
+        }
         if let Some(player) = &self.audio {
             player.player.set_volume(volume.max(0.0));
         }
@@ -338,6 +497,10 @@ impl Engine {
 
     pub fn has_audio_output(&self) -> bool {
         self.audio.is_some()
+            || matches!(
+                self.inner.lock().unwrap().session.as_ref(),
+                Some(PlaybackSession::Mpv(_))
+            )
     }
 }
 
@@ -352,6 +515,40 @@ impl Drop for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backend_choices_only_contain_available_engines() {
+        let both = AvailableBackends {
+            mpv: true,
+            ffmpeg: true,
+        };
+        assert_eq!(
+            both.choices(),
+            [PlaybackBackend::Mpv, PlaybackBackend::Ffmpeg]
+        );
+        assert_eq!(
+            both.effective(PlaybackBackend::Auto),
+            Some(PlaybackBackend::Mpv)
+        );
+        assert_eq!(
+            both.effective(PlaybackBackend::Ffmpeg),
+            Some(PlaybackBackend::Ffmpeg)
+        );
+        let only_ffmpeg = AvailableBackends {
+            mpv: false,
+            ffmpeg: true,
+        };
+        assert_eq!(only_ffmpeg.choices(), [PlaybackBackend::Ffmpeg]);
+        assert_eq!(
+            only_ffmpeg.effective(PlaybackBackend::Mpv),
+            Some(PlaybackBackend::Ffmpeg)
+        );
+        assert!(AvailableBackends::default().choices().is_empty());
+        assert_eq!(
+            AvailableBackends::default().effective(PlaybackBackend::Auto),
+            None
+        );
+    }
 
     #[test]
     fn superseded_request_never_starts_decoder() {
@@ -372,8 +569,11 @@ mod tests {
                 width: 0,
                 height: 0,
             },
+            backend: PlaybackBackend::Auto,
             pos: 0.0,
             speed: 1.0,
+            volume: 1.0,
+            paused: false,
             generation: 1,
             latest: Arc::new(AtomicU64::new(2)),
             audio: true,
@@ -381,5 +581,62 @@ mod tests {
             video_tx,
         };
         assert!(request.spawn().unwrap().is_none());
+    }
+
+    #[test]
+    fn live_seek_and_rate_do_not_replace_mpv_session() {
+        let Some(path) = std::env::var_os("DPLAYER_MPV_TEST_FILE") else {
+            return;
+        };
+        let engine = Engine::new();
+        let info = probe::probe(std::path::Path::new(&path)).unwrap();
+        let prepared = engine
+            .request_session(info.clone(), 0.0, 1.0)
+            .spawn()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(prepared.session, PlaybackSession::Mpv(_)));
+        assert!(engine.activate(prepared, Some(false)));
+        let generation = engine.generation();
+        assert!(engine.seek_live(0.4));
+        assert!(engine.set_speed_live(1.5));
+        assert_eq!(engine.generation(), generation);
+        assert_eq!(engine.position(), 0.4);
+        engine.set_backend(PlaybackBackend::Ffmpeg);
+        let prepared = engine
+            .request_session(info, engine.position(), 1.5)
+            .spawn()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(prepared.session, PlaybackSession::Ffmpeg(_)));
+        assert!(engine.activate(prepared, None));
+        assert!(!engine.seek_live(0.2));
+        engine.stop();
+    }
+
+    #[test]
+    fn ffmpeg_fallback_decodes_when_fixture_is_provided() {
+        let Some(path) = std::env::var_os("DPLAYER_FFMPEG_TEST_FILE") else {
+            return;
+        };
+        let engine = Engine::new();
+        let info = probe::probe(std::path::Path::new(&path)).unwrap();
+        let prepared = engine
+            .request_session(info, 0.0, 1.0)
+            .spawn()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(prepared.session, PlaybackSession::Ffmpeg(_)));
+        assert!(engine.activate(prepared, Some(false)));
+        let (generation, frame) = engine
+            .video()
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(generation, engine.generation());
+        assert_eq!((frame.width, frame.height), (320, 180));
+        assert!(!engine.seek_live(0.2));
+        engine.stop();
     }
 }

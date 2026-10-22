@@ -85,6 +85,7 @@ pub fn show_settings() {
     AppBuilder::new()
         .on_started(move |app| {
             let ready_window = window.clone();
+            settings.detect_backends(app.clone());
             app.append_window(
                 options,
                 Color::rgba(0, 0, 0, 0),

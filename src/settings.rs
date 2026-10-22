@@ -2,16 +2,17 @@
 
 use crate::components::{column, fixed, pad, row, view};
 use crate::config::{
-    Accent, AudioBackground, BarStyle, Config, ControlsWidth, CoverShape, Renderer, RepeatMode,
-    TimeDisplay,
+    Accent, AudioBackground, BarStyle, Config, ControlsWidth, CoverShape, PlaybackBackend,
+    Renderer, RepeatMode, TimeDisplay,
 };
+use crate::engine::AvailableBackends;
 use crate::icons::Icons;
 use creamui_core::{
     layout::{AlignItems, Dimension, FlexWrap, JustifyContent, LengthPercentage, Style},
     BoxShadow, BoxedWidget, LinearGradient, Size, StateStyle, Styled,
 };
 use creamui_reactive::Signal;
-use creamui_render::WindowHandle;
+use creamui_render::{AppHandle, WindowHandle};
 use creamui_theme::{use_theme, Color};
 use creamui_widgets::{
     tab_styles, AppTitlebar, ButtonVariant, Dialog, Icon, RawButton, RawScrollView, RawSlider,
@@ -42,6 +43,7 @@ enum Page {
 #[derive(Clone)]
 pub(crate) struct State {
     config: Signal<Config>,
+    available_backends: Signal<Option<AvailableBackends>>,
     page: Signal<Page>,
     message: Signal<Option<String>>,
     reset_open: Signal<bool>,
@@ -55,6 +57,7 @@ impl State {
     pub(crate) fn load() -> Self {
         Self {
             config: Signal::new(Config::load()),
+            available_backends: Signal::new(None),
             page: Signal::new(Page::Playback),
             message: Signal::new(None),
             reset_open: Signal::new(false),
@@ -63,6 +66,13 @@ impl State {
             system_accent: crate::app::load_system_theme().colors.accent,
             window: Rc::new(RefCell::new(None)),
         }
+    }
+
+    pub(crate) fn detect_backends(&self, app: AppHandle) {
+        let state = self.clone();
+        app.spawn_background(AvailableBackends::detect, move |available| {
+            state.available_backends.set(Some(available));
+        });
     }
 
     fn update(&self, change: impl FnOnce(&mut Config)) {
@@ -314,6 +324,34 @@ fn reset_dialog(state: &State) -> BoxedWidget {
 
 fn playback(state: &State) -> BoxedWidget {
     let playback = state.config.get().playback;
+    let available = state.available_backends.get();
+    let backend_options = available.unwrap_or_default().choices();
+    let backend = if available.is_none() {
+        Box::new(Text::secondary("Detecting playback backends…")) as BoxedWidget
+    } else if backend_options.is_empty() {
+        Box::new(Text::secondary(
+            "No backend available. Install ffprobe and libmpv or ffmpeg.",
+        )) as BoxedWidget
+    } else {
+        let selected = available.unwrap().effective(playback.backend);
+        let labels: Vec<_> = backend_options
+            .iter()
+            .map(|backend| match backend {
+                PlaybackBackend::Mpv => "libmpv",
+                PlaybackBackend::Ffmpeg => "FFmpeg",
+                PlaybackBackend::Auto => unreachable!(),
+            })
+            .collect();
+        segmented(
+            state,
+            backend_options
+                .iter()
+                .position(|backend| Some(*backend) == selected)
+                .unwrap_or(0),
+            &labels,
+            move |config, index| config.playback.backend = backend_options[index],
+        )
+    };
     let volume = {
         let state = state.clone();
         view(
@@ -392,6 +430,16 @@ fn playback(state: &State) -> BoxedWidget {
     view(
         column(22.0),
         vec![
+            section(
+                "Playback engine",
+                vec![preference_row(
+                    state,
+                    "play",
+                    "Backend",
+                    "Available engines only. Switching preserves the current track and position.",
+                    backend,
+                )],
+            ),
             section(
                 "When the player starts",
                 vec![
