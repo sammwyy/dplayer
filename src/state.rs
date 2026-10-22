@@ -49,6 +49,7 @@ pub struct PlayerState {
     pub app: AppHandle,
     pub icons: Icons,
     pub window: Rc<RefCell<Option<WindowHandle>>>,
+    pub(crate) window_pending: Rc<Cell<bool>>,
 
     pub queue: Signal<Vec<QueueItem>>,
     pub current: Signal<Option<usize>>,
@@ -119,6 +120,7 @@ impl PlayerState {
             app,
             icons: Icons::load(),
             window: Rc::new(RefCell::new(None)),
+            window_pending: Rc::new(Cell::new(false)),
             queue: Signal::new(Vec::new()),
             current: Signal::new(None),
             media: Signal::new(None),
@@ -180,6 +182,10 @@ impl PlayerState {
     pub fn poke(&self) {
         self.last_move.set(Instant::now());
         self.set_chrome(true);
+    }
+
+    pub(crate) fn media_accent(&self) -> Option<Color> {
+        self.media_accent.get()
     }
 
     /// Ignores pointer deltas below 2 px because some Wayland compositors
@@ -293,7 +299,12 @@ impl PlayerState {
     }
 
     fn apply_theme(&self) {
-        if let Some(window) = self.window.borrow().as_ref() {
+        if let Some(window) = self
+            .window
+            .borrow()
+            .as_ref()
+            .filter(|window| window.is_open())
+        {
             window.set_theme(crate::app::theme_for(self.media_accent.get()));
         }
     }
@@ -848,6 +859,7 @@ impl PlayerState {
             move |frame| {
                 if let Some((gen, f)) = frame {
                     if gen == state.engine.video_generation()
+                        && state.window.borrow().as_ref().is_some_and(|w| w.is_open())
                         && state.last_video_frame.get().elapsed() >= Duration::from_millis(40)
                     {
                         state.last_video_frame.set(Instant::now());

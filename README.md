@@ -11,6 +11,8 @@ A native video and music player for Linux, built on
   slides in and out over video: seek bar (click or drag), play/pause,
   previous / next, shuffle, repeat (off → all → one), playback speed
   (0.5×–2×), volume slider and mute.
+- The empty player keeps the same titlebar and transport card, with 00:00
+  timestamps and disabled playback controls; open-file actions stay available.
 - Separate **Open** (replace the queue and play now) and **Add Queue** (insert
   after the current track) buttons to the left of the transport controls.
   Their labels hide when space is limited. The queue panel keeps its
@@ -37,11 +39,12 @@ A native video and music player for Linux, built on
 - Keyboard-first: `space` play/pause · `←` `→` seek 5 s (`shift` = 30 s) ·
   `↑` `↓` volume · `f` maximize · `m` mute · `[` `]` speed ·
   `n`/`p` next/previous · `l` repeat · `s` shuffle · `t` queue ·
-  `o` open · `,` settings · `q`/`Esc` quit.
+  `o` open · `,` settings · `q`/`Esc` close the window.
 - Settings window (`dplayer --settings`, or the gear in the top-left corner):
   available playback backends, startup volume / speed / repeat / shuffle,
   autoplay, seek steps, controls auto-hide delay, animations, bar width and
-  style, accent color (automatic, system or a preset), music background and
+  style, optional background playback with a Linux tray icon, accent color
+  (automatic, system or a preset), music background and
   cover shape. Stored in `~/.config/dplayer/config.toml` and applied live to
   open players.
 
@@ -49,11 +52,19 @@ A native video and music player for Linux, built on
 
 ```sh
 dplayer [FILE|DIRECTORY ...]
+dplayer --player [FILE|DIRECTORY ...]
 dplayer --settings
+dplayer --quit
 ```
 
 Directories are expanded to their playable files in sorted order; with no
 arguments the player opens on a welcome screen.
+By default closing the player window quits the player. Enable **Keep playing
+in background** in Settings and restart the player to keep playback running
+after closing the window. On Linux the tray offers Show player, Play / Pause,
+Next and Quit. `dplayer` also restores the window without restarting the
+track; passing files opens them in the existing player. `dplayer --quit`
+stops the background player. Settings remain a separate window/process.
 
 ## Architecture
 

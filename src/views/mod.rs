@@ -6,7 +6,7 @@ pub mod stage;
 pub mod subtitles;
 
 use crate::components::*;
-use crate::state::{PlayerState, Status};
+use crate::state::PlayerState;
 use creamui_core::Size;
 
 /// Ease-out cubic, so the chrome decelerates as it settles.
@@ -21,9 +21,7 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
         let reveal = ease(p.chrome_progress.get());
         if reveal > 0.0 {
             children.push(chrome::build(p, reveal, size.width));
-            if p.status.get() != Status::Empty {
-                children.push(controls::build(p, reveal, size.width));
-            }
+            children.push(controls::build(p, reveal, size.width));
         }
         if p.queue_open.get() {
             children.push(queue::build(p));

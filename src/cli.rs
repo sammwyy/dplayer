@@ -5,7 +5,9 @@ pub const HELP: &str = "\
 Dplayer — native video and music player
 
 Usage: dplayer [FILE|DIRECTORY ...]
+       dplayer --player [FILE|DIRECTORY ...]
        dplayer --settings
+       dplayer --quit
        dplayer --help | --version
 
 Directories are scanned for playable files. With no arguments the player
@@ -13,23 +15,22 @@ opens on its welcome screen; files can be added from there or with 'o'.
 
 Keyboard: space play/pause · ← → seek 5s (shift 30s) · ↑ ↓ volume ·
 f maximize · m mute · [ ] speed · n p next/prev · l repeat · s shuffle ·
-o open · , settings · q quit";
+o open · , settings · q close window · --quit stop player";
 
 pub enum Launch {
     Play(Vec<PathBuf>),
     Settings,
+    Quit,
     Help,
     Version,
 }
 
 pub fn is_media(path: &Path) -> bool {
-    crate::MEDIA_EXTENSIONS
-        .iter()
-        .any(|ext| {
-            path.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case(ext))
-        })
+    crate::MEDIA_EXTENSIONS.iter().any(|ext| {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+    })
 }
 
 fn expand(path: PathBuf, out: &mut Vec<PathBuf>) {
@@ -53,7 +54,9 @@ pub fn collect_media(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     for path in paths {
         expand(path, &mut out);
     }
-    out.into_iter().filter(|p| p.is_file() && is_media(p)).collect()
+    out.into_iter()
+        .filter(|p| p.is_file() && is_media(p))
+        .collect()
 }
 
 pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Launch, String> {
@@ -66,6 +69,8 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Launch, String> {
                 "-h" | "--help" => return Ok(Launch::Help),
                 "-V" | "--version" => return Ok(Launch::Version),
                 "--settings" => return Ok(Launch::Settings),
+                "--player" => {}
+                "--quit" => return Ok(Launch::Quit),
                 "--" => bare = true,
                 other => return Err(format!("unknown option '{other}' (try --help)")),
             }
@@ -99,5 +104,25 @@ pub fn kind_label(path: &Path) -> String {
         kind.into()
     } else {
         format!("{kind} · {ext}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_modes_have_distinct_flags() {
+        assert!(
+            matches!(parse([OsString::from("--player")].into_iter()), Ok(Launch::Play(paths)) if paths.is_empty())
+        );
+        assert!(matches!(
+            parse([OsString::from("--settings")].into_iter()),
+            Ok(Launch::Settings)
+        ));
+        assert!(matches!(
+            parse([OsString::from("--quit")].into_iter()),
+            Ok(Launch::Quit)
+        ));
     }
 }

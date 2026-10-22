@@ -125,6 +125,12 @@ fn welcome(p: &PlayerState) -> BoxedWidget {
             flex_basis: Dimension::Length(0.0),
             justify_content: Some(JustifyContent::Center),
             align_items: Some(AlignItems::Center),
+            padding: creamui_core::layout::Rect {
+                left: LengthPercentage::Length(16.0),
+                right: LengthPercentage::Length(16.0),
+                top: LengthPercentage::Length(chrome::HEIGHT),
+                bottom: LengthPercentage::Length(105.0),
+            },
             ..column(0.0)
         },
         vec![

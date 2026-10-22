@@ -46,6 +46,7 @@ pub struct InterfaceConfig {
     pub autohide_delay: u32,
     /// Slide and fade transitions for the playback controls.
     pub animations: bool,
+    pub background_playback: bool,
     pub controls_width: ControlsWidth,
     pub time_display: TimeDisplay,
     /// Which backend draws the windows. Applies to newly opened windows.
@@ -239,6 +240,7 @@ impl Default for InterfaceConfig {
         Self {
             autohide_delay: 3,
             animations: true,
+            background_playback: false,
             controls_width: ControlsWidth::Default,
             time_display: TimeDisplay::Total,
             renderer: Renderer::Cpu,
@@ -319,6 +321,7 @@ mod tests {
         assert_eq!(config.playback.seek_step, 10);
         assert_eq!(config.playback.seek_step_long, 30);
         assert!(config.interface.animations);
+        assert!(!config.interface.background_playback);
         assert_eq!(config.playback.backend, PlaybackBackend::Auto);
     }
 
@@ -328,5 +331,15 @@ mod tests {
         assert_eq!(config.playback.backend, PlaybackBackend::Mpv);
         let saved = toml::to_string(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
+    }
+
+    #[test]
+    fn background_playback_round_trips() {
+        let config: Config = toml::from_str("[interface]\nbackground_playback = true\n").unwrap();
+        assert!(config.interface.background_playback);
+        assert_eq!(
+            toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
+            config
+        );
     }
 }

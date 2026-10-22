@@ -582,6 +582,18 @@ fn interface(state: &State) -> BoxedWidget {
                     renderer,
                 )],
             ),
+            section(
+                "Window",
+                vec![preference_row(
+                    state,
+                    "panel",
+                    "Keep playing in background",
+                    "Closing the player keeps playback running in the tray. Applies after restarting the player.",
+                    toggle(state, interface.background_playback, |c| {
+                        c.interface.background_playback = !c.interface.background_playback
+                    }),
+                )],
+            ),
         ],
     )
 }
@@ -923,7 +935,7 @@ fn shortcuts(state: &State) -> BoxedWidget {
                     (&["O"], "Open files"),
                     (&["F"], "Maximize"),
                     (&[","], "Open settings"),
-                    (&["Q"], "Quit"),
+                    (&["Q"], "Close player window"),
                 ],
             ),
         ],

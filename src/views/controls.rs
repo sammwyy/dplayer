@@ -1,13 +1,18 @@
 use crate::components::*;
-use crate::state::{PlayerState, Repeat};
+use crate::state::{PlayerState, Repeat, Status};
 use creamui_widgets::{RawSlider, Text};
 
 fn frac(point: Point, rect: Rect) -> f64 {
     (point.x / rect.width.max(1.0)).clamp(0.0, 1.0) as f64
 }
 
+fn no_media(p: &PlayerState) -> bool {
+    p.status.get() != Status::Playing || p.media.get().is_none()
+}
+
 fn seekbar(p: &PlayerState) -> BoxedWidget {
     let t = use_theme();
+    let disabled = no_media(p);
     let duration = p.duration.get();
     let fraction = if duration > 0.0 {
         (p.shown_position() / duration).clamp(0.0, 1.0) as f32
@@ -42,26 +47,34 @@ fn seekbar(p: &PlayerState) -> BoxedWidget {
                     },
                     ..row(0.0)
                 })
-                .background(t.colors.accent)
+                .background(if disabled {
+                    t.colors.text_disabled
+                } else {
+                    t.colors.accent
+                })
                 .corner_radius(2.5)
-                .child(Box::new(
-                    RawView::new(Style {
-                        position: creamui_core::layout::Position::Absolute,
-                        size: creamui_core::layout::Size {
-                            width: Dimension::Length(13.0),
-                            height: Dimension::Length(13.0),
-                        },
-                        inset: creamui_core::layout::Rect {
-                            top: LengthPercentageAuto::Length(-4.0),
-                            right: LengthPercentageAuto::Length(-7.0),
-                            bottom: LengthPercentageAuto::Auto,
-                            left: LengthPercentageAuto::Auto,
-                        },
-                        ..row(0.0)
-                    })
-                    .background(t.colors.text_primary)
-                    .corner_radius(6.5),
-                )),
+                .with_children(if disabled {
+                    vec![]
+                } else {
+                    vec![Box::new(
+                        RawView::new(Style {
+                            position: creamui_core::layout::Position::Absolute,
+                            size: creamui_core::layout::Size {
+                                width: Dimension::Length(13.0),
+                                height: Dimension::Length(13.0),
+                            },
+                            inset: creamui_core::layout::Rect {
+                                top: LengthPercentageAuto::Length(-4.0),
+                                right: LengthPercentageAuto::Length(-7.0),
+                                bottom: LengthPercentageAuto::Auto,
+                                left: LengthPercentageAuto::Auto,
+                            },
+                            ..row(0.0)
+                        })
+                        .background(t.colors.text_primary)
+                        .corner_radius(6.5),
+                    )]
+                }),
             )),
         )],
     );
@@ -79,6 +92,7 @@ fn seekbar(p: &PlayerState) -> BoxedWidget {
             },
             || {},
         )
+        .disabled(disabled)
         .keyboard_focus(false)
         .background(CLEAR)
         .with_drag_start(move |point, rect| start.begin_scrub(frac(point, rect)))
@@ -92,10 +106,13 @@ fn icon_button(
     p: &PlayerState,
     icon: &str,
     active: bool,
+    disabled: bool,
     on_click: impl Fn() + 'static,
 ) -> BoxedWidget {
     let t = use_theme();
-    let color = if active {
+    let color = if disabled {
+        t.colors.text_disabled
+    } else if active {
         t.colors.accent
     } else {
         t.colors.text_secondary
@@ -109,6 +126,7 @@ fn icon_button(
             },
             on_click,
         )
+        .disabled(disabled)
         .keyboard_focus(false)
         .corner_radius(8.0)
         .hover_style(StateStyle::new().background(t.colors.surface_hover))
@@ -124,7 +142,7 @@ fn media_button(
     click: impl Fn() + 'static,
 ) -> BoxedWidget {
     if !show_label {
-        return icon_button(p, icon, false, click);
+        return icon_button(p, icon, false, false, click);
     }
     let t = use_theme();
     Box::new(
@@ -142,6 +160,7 @@ fn media_button(
 
 fn play_button(p: &PlayerState) -> BoxedWidget {
     let t = use_theme();
+    let disabled = no_media(p);
     let playing = p.playing.get();
     let icon = p.icons.get(if playing { "pause" } else { "play" });
     let p = p.clone();
@@ -154,12 +173,25 @@ fn play_button(p: &PlayerState) -> BoxedWidget {
             },
             move || p.toggle(),
         )
+        .disabled(disabled)
         .keyboard_focus(false)
-        .background(t.colors.accent)
+        .background(if disabled {
+            t.colors.surface_hover
+        } else {
+            t.colors.accent
+        })
         .corner_radius(19.0)
         .hover_style(StateStyle::new().background(t.colors.accent.mix(t.colors.text_primary, 0.12)))
         .child(Box::new(
-            Icon::new(icon, t.colors.selection_text).size(19.0),
+            Icon::new(
+                icon,
+                if disabled {
+                    t.colors.text_disabled
+                } else {
+                    t.colors.selection_text
+                },
+            )
+            .size(19.0),
         )),
     )
 }
@@ -189,16 +221,21 @@ fn time_label(text: String, end: bool) -> BoxedWidget {
 pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     let t = use_theme();
     let config = p.config.get();
+    let disabled = no_media(p);
     let max_width = config.interface.controls_width.max_width();
     let inner = (window_width - 32.0).min(max_width) - 26.0;
     // Optional controls make way for the transport on narrow windows.
     let compact = inner < 460.0;
     let duration = p.duration.get();
     let position = p.shown_position();
-    let end_time = match config.interface.time_display {
-        crate::config::TimeDisplay::Total => format_time(duration),
-        crate::config::TimeDisplay::Remaining => {
-            format!("-{}", format_time((duration - position).max(0.0)))
+    let end_time = if disabled {
+        "00:00".into()
+    } else {
+        match config.interface.time_display {
+            crate::config::TimeDisplay::Total => format_time(duration),
+            crate::config::TimeDisplay::Remaining => {
+                format!("-{}", format_time((duration - position).max(0.0)))
+            }
         }
     };
     let seek_row = view(
@@ -212,15 +249,17 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
 
     let shuffle = {
         let p2 = p.clone();
-        icon_button(p, "shuffle", p.shuffle.get(), move || p2.toggle_shuffle())
+        icon_button(p, "shuffle", p.shuffle.get(), disabled, move || {
+            p2.toggle_shuffle()
+        })
     };
     let prev = {
         let p2 = p.clone();
-        icon_button(p, "prev", false, move || p2.prev())
+        icon_button(p, "prev", false, disabled, move || p2.prev())
     };
     let next = {
         let p2 = p.clone();
-        icon_button(p, "next", false, move || {
+        icon_button(p, "next", false, disabled, move || {
             p2.advance(true);
         })
     };
@@ -232,7 +271,9 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
         } else {
             "repeat"
         };
-        icon_button(p, icon, mode != Repeat::Off, move || p2.cycle_repeat())
+        icon_button(p, icon, mode != Repeat::Off, disabled, move || {
+            p2.cycle_repeat()
+        })
     };
     let speed = {
         let p2 = p.clone();
@@ -245,6 +286,7 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
                 },
                 move || p2.cycle_speed(true),
             )
+            .disabled(disabled)
             .keyboard_focus(false)
             .corner_radius(8.0)
             .hover_style(StateStyle::new().background(t.colors.surface_hover))
@@ -262,9 +304,13 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     let mute = {
         let p2 = p.clone();
         let muted = p.muted.get() || !p.engine.has_audio_output();
-        icon_button(p, if muted { "mute" } else { "volume" }, muted, move || {
-            p2.toggle_mute()
-        })
+        icon_button(
+            p,
+            if muted { "mute" } else { "volume" },
+            muted,
+            disabled,
+            move || p2.toggle_mute(),
+        )
     };
     let volume = {
         let p2 = p.clone();
@@ -284,6 +330,7 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
                 t.colors.text_primary,
                 move |v| p2.set_volume(v),
             )
+            .disabled(disabled)
             .track(4.0, 2.0)
             .handle(11.0, 5.5),
         ) as BoxedWidget

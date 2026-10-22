@@ -61,15 +61,9 @@ impl PlayerState {
                 LoopMode::Playlist => Repeat::All,
             }),
             MediaCommand::Raise => {
-                if let Some(window) = self.window.borrow().as_ref() {
-                    window.show();
-                }
+                crate::app::player::open_window(self);
             }
-            MediaCommand::Quit => {
-                if let Some(window) = self.window.borrow().as_ref() {
-                    window.close();
-                }
-            }
+            MediaCommand::Quit => self.app.exit(),
             MediaCommand::Open(path) => {
                 let start = self.queue.peek().len();
                 let had_current = self.current.peek().is_some();

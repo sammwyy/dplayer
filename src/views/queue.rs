@@ -78,8 +78,8 @@ fn row_item(p: &PlayerState, index: usize) -> Option<RawButton> {
 pub fn build(p: &PlayerState) -> BoxedWidget {
     let t = use_theme();
     let queue = p.queue.get();
-    // Leave room for the bottom transport card when media is loaded.
-    let bottom = if p.media.get().is_some() { 100.0 } else { 12.0 };
+    // Leave room for the bottom transport card.
+    let bottom = 100.0;
     let mut rows: Vec<BoxedWidget> = Vec::with_capacity(queue.len() + 1);
     for index in 0..queue.len() {
         if let Some(item) = row_item(p, index) {

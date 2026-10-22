@@ -38,7 +38,7 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9"
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
-creamui-render = { path = "../creamui/crates/render", default-features = false, features = ["platform-winit", "platform-wayland", "platform-x11", "platform-window-integration-blair", "platform-blur-blair", "platform-blur-kwin"] }
+creamui-render = { path = "../creamui/crates/render", default-features = false, features = ["platform-winit", "platform-wayland", "platform-x11", "platform-window-integration-blair", "platform-blur-blair", "platform-blur-kwin", "tray"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 rfd = "0.17"
