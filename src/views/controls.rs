@@ -1,6 +1,47 @@
 use crate::components::*;
+use crate::config::AudioBackground;
 use crate::state::{PlayerState, Repeat, Status};
+use creamui_core::runtime::ImageFit;
+use creamui_core::{Painter, Size, Widget};
+use creamui_image::ImageData;
 use creamui_widgets::{RawSlider, Text};
+use std::rc::Rc;
+
+struct BarCard {
+    style: creamui_core::Style,
+    children: Vec<BoxedWidget>,
+    color: Color,
+    backdrop: Option<ImageData>,
+}
+
+impl Styled for BarCard {
+    fn set_style(&mut self, style: creamui_core::Style) {
+        self.style = style;
+    }
+}
+
+impl Widget for BarCard {
+    fn style(&self) -> creamui_core::Style {
+        self.style.clone()
+    }
+
+    fn paint(&self, painter: &mut dyn Painter, rect: Rect) {
+        if let Some(backdrop) = &self.backdrop {
+            painter.push_clip_rounded(rect, 16.0);
+            painter.draw_image(rect, backdrop.image(), None);
+            painter.pop_clip();
+        }
+        painter.fill_rect(rect, self.color, 16.0);
+    }
+
+    fn children(&mut self) -> Vec<BoxedWidget> {
+        std::mem::take(&mut self.children)
+    }
+
+    fn on_click(&self) -> Option<Rc<dyn Fn()>> {
+        Some(Rc::new(|| {}))
+    }
+}
 
 fn frac(point: Point, rect: Rect) -> f64 {
     (point.x / rect.width.max(1.0)).clamp(0.0, 1.0) as f64
@@ -218,11 +259,12 @@ fn time_label(text: String, end: bool) -> BoxedWidget {
     )
 }
 
-pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
+pub fn build(p: &PlayerState, reveal: f32, size: Size) -> BoxedWidget {
     let t = use_theme();
     let config = p.config.get();
     let disabled = no_media(p);
     let max_width = config.interface.controls_width.max_width();
+    let window_width = size.width;
     let inner = (window_width - 32.0).min(max_width) - 26.0;
     // Optional controls make way for the transport on narrow windows.
     let compact = inner < 460.0;
@@ -382,14 +424,27 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
         ],
     );
 
-    let elevated = t.colors.surface_elevated;
-    let background = match config.appearance.bar_style {
-        crate::config::BarStyle::Floating => elevated,
-        crate::config::BarStyle::Solid => t.colors.surface,
+    let background = config
+        .appearance
+        .bar_background(t.colors.surface_elevated, t.colors.surface);
+    let card_width = (window_width - 32.0).min(max_width).max(1.0);
+    let source = if config.appearance.bar_blur {
+        match p.media.get() {
+            Some(media) if media.has_video => p.frame.get().map(|image| (image, ImageFit::Contain)),
+            Some(_) if config.appearance.audio_background == AudioBackground::Blurred => {
+                p.backdrop.get().map(|image| (image, ImageFit::Cover))
+            }
+            _ => None,
+        }
+    } else {
+        None
     };
+    let backdrop = source.and_then(|(image, fit)| {
+        super::bar_backdrop::blurred(&image, (size.width, size.height), card_width, 84.0, fit)
+    });
     let border = t.colors.border;
-    let bar = RawButton::new(
-        Style {
+    let bar = BarCard {
+        style: Style {
             size: creamui_core::layout::Size {
                 width: Dimension::Percent(1.0),
                 height: Dimension::Auto,
@@ -405,14 +460,14 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
                 bottom: LengthPercentage::Length(10.0),
             },
             ..column(6.0)
-        },
-        || {},
-    )
-    .keyboard_focus(false)
-    .background(background)
+        }
+        .into(),
+        color: background,
+        backdrop,
+        children: vec![seek_row, transport],
+    }
     .corner_radius(16.0)
-    .border(border, 1.0)
-    .with_children(vec![seek_row, transport]);
+    .border(border, 1.0);
 
     view(
         Style {

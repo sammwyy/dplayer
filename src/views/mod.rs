@@ -1,4 +1,5 @@
 pub mod audio;
+mod bar_backdrop;
 pub(crate) mod chrome;
 pub mod controls;
 pub mod queue;
@@ -21,7 +22,7 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
         let reveal = ease(p.chrome_progress.get());
         if reveal > 0.0 {
             children.push(chrome::build(p, reveal, size.width));
-            children.push(controls::build(p, reveal, size.width));
+            children.push(controls::build(p, reveal, size));
         }
         if p.queue_open.get() {
             children.push(queue::build(p));

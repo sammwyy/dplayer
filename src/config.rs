@@ -60,6 +60,23 @@ pub struct AppearanceConfig {
     pub audio_background: AudioBackground,
     pub cover_shape: CoverShape,
     pub bar_style: BarStyle,
+    pub bar_opacity: u8,
+    pub bar_blur: bool,
+}
+
+impl AppearanceConfig {
+    pub fn bar_background(&self, elevated: Color, surface: Color) -> Color {
+        let base = match self.bar_style {
+            BarStyle::Floating => elevated,
+            BarStyle::Solid => surface,
+        };
+        Color::rgba(
+            base.r,
+            base.g,
+            base.b,
+            ((base.a as u16 * self.bar_opacity.min(100) as u16 + 50) / 100) as u8,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -255,6 +272,8 @@ impl Default for AppearanceConfig {
             audio_background: AudioBackground::Blurred,
             cover_shape: CoverShape::Rounded,
             bar_style: BarStyle::Floating,
+            bar_opacity: 100,
+            bar_blur: false,
         }
     }
 }
@@ -337,6 +356,27 @@ mod tests {
     fn background_playback_round_trips() {
         let config: Config = toml::from_str("[interface]\nbackground_playback = true\n").unwrap();
         assert!(config.interface.background_playback);
+        assert_eq!(
+            toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
+            config
+        );
+    }
+
+    #[test]
+    fn bar_background_preferences_keep_old_defaults_and_round_trip() {
+        let old: Config = toml::from_str("[appearance]\nbar_style = \"solid\"\n").unwrap();
+        assert_eq!(old.appearance.bar_opacity, 100);
+        assert!(!old.appearance.bar_blur);
+        let config: Config =
+            toml::from_str("[appearance]\nbar_opacity = 35\nbar_blur = true\n").unwrap();
+        assert_eq!(config.appearance.bar_opacity, 35);
+        assert!(config.appearance.bar_blur);
+        assert_eq!(
+            config
+                .appearance
+                .bar_background(Color::rgb(20, 40, 60), Color::rgb(80, 100, 120)),
+            Color::rgba(20, 40, 60, 89)
+        );
         assert_eq!(
             toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
             config

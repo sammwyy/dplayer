@@ -191,7 +191,7 @@ fn downscale(pixels: &[u8], width: u32, height: u32) -> (u32, u32, Vec<u8>) {
 }
 
 /// Repeated box blur, which approximates a gaussian on the thumbnail.
-fn blur((width, height, mut pixels): (u32, u32, Vec<u8>)) -> (u32, u32, Vec<u8>) {
+pub(crate) fn blur((width, height, mut pixels): (u32, u32, Vec<u8>)) -> (u32, u32, Vec<u8>) {
     let (w, h) = (width as i32, height as i32);
     let mut scratch = pixels.clone();
     for _ in 0..BLUR_PASSES {

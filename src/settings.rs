@@ -627,6 +627,42 @@ fn appearance(state: &State) -> BoxedWidget {
         &["Floating", "Solid"],
         |c, i| c.appearance.bar_style = [BarStyle::Floating, BarStyle::Solid][i],
     );
+    let opacity = {
+        let state = state.clone();
+        view(
+            row(10.0),
+            vec![
+                Box::new(
+                    RawSlider::new(
+                        Style {
+                            size: creamui_core::layout::Size {
+                                width: Dimension::Length(150.0),
+                                height: Dimension::Length(28.0),
+                            },
+                            flex_shrink: 0.0,
+                            ..row(0.0)
+                        },
+                        appearance.bar_opacity.min(100) as f32 / 100.0,
+                        use_theme().colors.surface_hover,
+                        use_theme().colors.accent,
+                        use_theme().colors.text_primary,
+                        move |value| {
+                            state.update(|c| {
+                                c.appearance.bar_opacity =
+                                    (value.clamp(0.0, 1.0) * 100.0).round() as u8
+                            })
+                        },
+                    )
+                    .track(4.0, 2.0)
+                    .handle(13.0, 6.5),
+                ) as BoxedWidget,
+                Box::new(
+                    Text::secondary(format!("{}%", appearance.bar_opacity.min(100)))
+                        .font_size(12.0),
+                ),
+            ],
+        )
+    };
     view(
         column(22.0),
         vec![
@@ -653,13 +689,31 @@ fn appearance(state: &State) -> BoxedWidget {
             ),
             section(
                 "Controls",
-                vec![preference_row(
-                    state,
-                    "panel",
-                    "Playback bar",
-                    "Raised or flat, both fully opaque.",
-                    bar,
-                )],
+                vec![
+                    preference_row(
+                        state,
+                        "panel",
+                        "Playback bar",
+                        "Raised or flat background.",
+                        bar,
+                    ),
+                    preference_row(
+                        state,
+                        "sliders",
+                        "Background opacity",
+                        "Only the card background changes; controls remain fully visible.",
+                        opacity,
+                    ),
+                    preference_row(
+                        state,
+                        "image",
+                        "Blur behind controls",
+                        "Soften video or artwork beneath the playback bar.",
+                        toggle(state, appearance.bar_blur, |c| {
+                            c.appearance.bar_blur = !c.appearance.bar_blur
+                        }),
+                    ),
+                ],
             ),
         ],
     )
@@ -816,10 +870,7 @@ fn preview(state: &State) -> BoxedWidget {
         ControlsWidth::Default => 0.72,
         ControlsWidth::Wide => 0.92,
     };
-    let bar_bg = match appearance.bar_style {
-        BarStyle::Floating => theme.colors.surface_elevated,
-        BarStyle::Solid => theme.colors.surface,
-    };
+    let bar_bg = appearance.bar_background(theme.colors.surface_elevated, theme.colors.surface);
     let bar = Box::new(
         RawView::new(Style {
             size: creamui_core::layout::Size {

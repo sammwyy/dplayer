@@ -10,7 +10,9 @@ A native video and music player for Linux, built on
 - Floating transport card, centered with a configurable maximum width, that
   slides in and out over video: seek bar (click or drag), play/pause,
   previous / next, shuffle, repeat (off → all → one), playback speed
-  (0.5×–2×), volume slider and mute.
+  (0.5×–2×), volume slider and mute. Its background opacity is adjustable
+  independently of the controls; optional blur softens video or artwork
+  underneath.
 - The empty player keeps the same titlebar and transport card, with 00:00
   timestamps and disabled playback controls; open-file actions stay available.
 - Separate **Open** (replace the queue and play now) and **Add Queue** (insert
@@ -42,8 +44,8 @@ A native video and music player for Linux, built on
   `o` open · `,` settings · `q`/`Esc` close the window.
 - Settings window (`dplayer --settings`, or the gear in the top-left corner):
   available playback backends, startup volume / speed / repeat / shuffle,
-  autoplay, seek steps, controls auto-hide delay, animations, bar width and
-  style, optional background playback with a Linux tray icon, accent color
+  autoplay, seek steps, controls auto-hide delay, animations, bar width, style,
+  background opacity and blur, optional background playback with a Linux tray icon, accent color
   (automatic, system or a preset), music background and
   cover shape. Stored in `~/.config/dplayer/config.toml` and applied live to
   open players.
