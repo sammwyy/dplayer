@@ -442,7 +442,6 @@ pub fn build(p: &PlayerState, reveal: f32, size: Size) -> BoxedWidget {
     let backdrop = source.and_then(|(image, fit)| {
         super::bar_backdrop::blurred(&image, (size.width, size.height), card_width, 84.0, fit)
     });
-    let border = t.colors.border;
     let bar = BarCard {
         style: Style {
             size: creamui_core::layout::Size {
@@ -466,8 +465,7 @@ pub fn build(p: &PlayerState, reveal: f32, size: Size) -> BoxedWidget {
         backdrop,
         children: vec![seek_row, transport],
     }
-    .corner_radius(16.0)
-    .border(border, 1.0);
+    .corner_radius(16.0);
 
     view(
         Style {

@@ -25,7 +25,7 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
             children.push(controls::build(p, reveal, size));
         }
         if p.queue_open.get() {
-            children.push(queue::build(p));
+            children.push(queue::build(p, size.width));
         }
         if p.subtitles_open.get() && p.media.get().as_ref().is_some_and(|m| m.has_video) {
             children.push(subtitles::build(p, size));

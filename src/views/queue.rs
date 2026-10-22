@@ -1,6 +1,26 @@
 use crate::components::*;
 use crate::state::PlayerState;
-use creamui_widgets::{RawScrollView, Text};
+use creamui_widgets::{AppTitlebar, RawScrollView, Text};
+
+fn panel_inset(
+    controls_lead: bool,
+    bottom: f32,
+) -> creamui_core::layout::Rect<LengthPercentageAuto> {
+    creamui_core::layout::Rect {
+        top: LengthPercentageAuto::Length(crate::views::chrome::HEIGHT + 8.0),
+        right: if controls_lead {
+            LengthPercentageAuto::Length(12.0)
+        } else {
+            LengthPercentageAuto::Auto
+        },
+        bottom: LengthPercentageAuto::Length(bottom),
+        left: if controls_lead {
+            LengthPercentageAuto::Auto
+        } else {
+            LengthPercentageAuto::Length(12.0)
+        },
+    }
+}
 
 fn row_item(p: &PlayerState, index: usize) -> Option<RawButton> {
     let t = use_theme();
@@ -75,7 +95,7 @@ fn row_item(p: &PlayerState, index: usize) -> Option<RawButton> {
     )
 }
 
-pub fn build(p: &PlayerState) -> BoxedWidget {
+pub fn build(p: &PlayerState, width: f32) -> BoxedWidget {
     let t = use_theme();
     let queue = p.queue.get();
     // Leave room for the bottom transport card.
@@ -108,12 +128,7 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
         RawButton::new(
             Style {
                 position: creamui_core::layout::Position::Absolute,
-                inset: creamui_core::layout::Rect {
-                    top: LengthPercentageAuto::Length(crate::views::chrome::HEIGHT + 8.0),
-                    right: LengthPercentageAuto::Length(12.0),
-                    bottom: LengthPercentageAuto::Length(bottom),
-                    left: LengthPercentageAuto::Auto,
-                },
+                inset: panel_inset(AppTitlebar::new(width).controls_lead(), bottom),
                 size: creamui_core::layout::Size {
                     width: Dimension::Length(300.0),
                     height: Dimension::Auto,
@@ -172,4 +187,20 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
             ),
         ]),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_follows_the_titlebar_action_side() {
+        let left = panel_inset(false, 100.0);
+        assert!(matches!(left.left, LengthPercentageAuto::Length(12.0)));
+        assert!(matches!(left.right, LengthPercentageAuto::Auto));
+
+        let right = panel_inset(true, 100.0);
+        assert!(matches!(right.left, LengthPercentageAuto::Auto));
+        assert!(matches!(right.right, LengthPercentageAuto::Length(12.0)));
+    }
 }
