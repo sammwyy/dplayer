@@ -26,7 +26,7 @@ fn action(
         .background(if active {
             Color::rgb(55, 55, 55)
         } else {
-            BLACK
+            CLEAR
         })
         .corner_radius(8.0)
         .hover_style(StateStyle::new().background(Color::rgb(45, 45, 45)))
@@ -64,20 +64,18 @@ pub fn build(p: &PlayerState, reveal: f32, width: f32) -> BoxedWidget {
     let mut bar = AppTitlebar::new(width)
         .height(HEIGHT)
         .start_boxed(view(row(2.0), actions));
+    if dark {
+        bar = bar.foreground(Color::rgb(255, 255, 255));
+    }
     if video {
         let title = media.map(|m| m.title).unwrap_or_default();
-        bar = bar.foreground(Color::rgb(255, 255, 255)).center(
+        bar = bar.center(
             Text::new(ellipsize(&title, ((width - 260.0) / 7.5).max(8.0) as usize))
                 .font_size(13.0)
                 .bold(true)
                 .color(Color::rgb(255, 255, 255)),
         );
     }
-    let background: creamui_core::Background = if dark {
-        BLACK.into()
-    } else {
-        use_theme().colors.surface.into()
-    };
     Box::new(
         bar.layout(Style {
             position: creamui_core::layout::Position::Absolute,
@@ -89,6 +87,6 @@ pub fn build(p: &PlayerState, reveal: f32, width: f32) -> BoxedWidget {
             },
             ..Default::default()
         })
-        .background(background),
+        .background(CLEAR),
     )
 }
