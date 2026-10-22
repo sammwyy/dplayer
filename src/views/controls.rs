@@ -120,8 +120,12 @@ fn media_button(
     p: &PlayerState,
     icon: &str,
     text: &str,
+    show_label: bool,
     click: impl Fn() + 'static,
 ) -> BoxedWidget {
+    if !show_label {
+        return icon_button(p, icon, false, click);
+    }
     let t = use_theme();
     Box::new(
         RawButton::new(pad(row(5.0), 9.0, 5.0), click)
@@ -296,10 +300,25 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
             children,
         )
     };
-    let (leading, trailing) = if compact {
-        (vec![], vec![mute])
+    let leading = vec![
+        media_button(p, "open", "Open", inner >= 520.0, {
+            let p = p.clone();
+            move || p.open_dialog()
+        }),
+        media_button(p, "plus", "Add Queue", inner >= 520.0, {
+            let p = p.clone();
+            move || p.add_dialog()
+        }),
+    ];
+    let trailing = if compact {
+        vec![mute]
     } else {
-        (vec![], vec![speed, mute, volume])
+        vec![speed, mute, volume]
+    };
+    let center = if inner < 340.0 {
+        vec![prev, play_button(p), next]
+    } else {
+        vec![shuffle, prev, play_button(p), next, repeat]
     };
     let transport = view(
         row(4.0),
@@ -310,7 +329,7 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
                     flex_shrink: 0.0,
                     ..row(6.0)
                 },
-                vec![shuffle, prev, play_button(p), next, repeat],
+                center,
             ),
             side(JustifyContent::End, trailing),
         ],
@@ -346,26 +365,7 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     .background(background)
     .corner_radius(16.0)
     .border(border, 1.0)
-    .with_children(vec![
-        seek_row,
-        transport,
-        view(
-            Style {
-                justify_content: Some(JustifyContent::Center),
-                ..row(8.0)
-            },
-            vec![
-                media_button(p, "open", "Play now", {
-                    let p = p.clone();
-                    move || p.open_dialog()
-                }),
-                media_button(p, "plus", "Add next", {
-                    let p = p.clone();
-                    move || p.add_dialog()
-                }),
-            ],
-        ),
-    ]);
+    .with_children(vec![seek_row, transport]);
 
     view(
         Style {

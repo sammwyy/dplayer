@@ -11,8 +11,9 @@ A native video and music player for Linux, built on
   slides in and out over video: seek bar (click or drag), play/pause,
   previous / next, shuffle, repeat (off → all → one), playback speed
   (0.5×–2×), volume slider and mute.
-- Separate buttons below the transport for **Play now** (replace the queue)
-  and **Add next** (insert after the current track). The queue panel keeps its
+- Separate **Open** (replace the queue and play now) and **Add Queue** (insert
+  after the current track) buttons to the left of the transport controls.
+  Their labels hide when space is limited. The queue panel keeps its
   add / remove / click-to-play controls.
 - Subtitle selector in video mode: off, embedded tracks (including multiple
   languages), and same-name `.ass`, `.ssa`, `.srt` or `.vtt` files beside the video.

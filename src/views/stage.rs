@@ -141,8 +141,8 @@ fn welcome(p: &PlayerState) -> BoxedWidget {
             view(
                 row(10.0),
                 vec![
-                    pill_button(p, "open", "Open files", true, move || open.open_dialog()),
-                    pill_button(p, "plus", "Add to queue", false, move || add.add_dialog()),
+                    pill_button(p, "open", "Open", true, move || open.open_dialog()),
+                    pill_button(p, "plus", "Add Queue", false, move || add.add_dialog()),
                     pill_button(p, "settings", "Settings", false, crate::app::open_settings),
                 ],
             ),
