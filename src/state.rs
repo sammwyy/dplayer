@@ -83,6 +83,8 @@ pub struct PlayerState {
     /// Increments for every item that starts, so media controls see repeats.
     pub(crate) track_serial: Rc<Cell<u64>>,
     pub(crate) media_session: Rc<RefCell<Option<crate::backends::MediaSession>>>,
+    /// Discord rich presence, enabled by `interface.discord_presence`.
+    pub(crate) discord: Rc<RefCell<Option<crate::discord::Presence>>>,
     pub queue_scroll: ScrollController,
     pub subtitles_scroll: ScrollController,
     pub audio_scroll: ScrollController,
@@ -151,6 +153,13 @@ impl PlayerState {
             cover_art: Rc::new(RefCell::new(None)),
             track_serial: Rc::new(Cell::new(0)),
             media_session: Rc::new(RefCell::new(None)),
+            discord: Rc::new(RefCell::new(
+                config
+                    .interface
+                    .discord_presence
+                    .then(crate::discord::Presence::new)
+                    .flatten(),
+            )),
             queue_scroll: ScrollController::new(0.0),
             subtitles_scroll: ScrollController::new(0.0),
             audio_scroll: ScrollController::new(0.0),
@@ -286,8 +295,17 @@ impl PlayerState {
         let config = Config::load();
         let accent_changed = config.appearance.accent != self.config.peek().appearance.accent;
         let backend_changed = config.playback.backend != self.config.peek().playback.backend;
+        let discord = config.interface.discord_presence;
+        let discord_changed = discord != self.config.peek().interface.discord_presence;
         self.engine.set_backend(config.playback.backend);
         self.config.set(config);
+        if discord_changed {
+            *self.discord.borrow_mut() = if discord {
+                crate::discord::Presence::new()
+            } else {
+                None
+            };
+        }
         if accent_changed {
             self.apply_theme();
         }

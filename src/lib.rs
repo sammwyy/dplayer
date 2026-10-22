@@ -5,6 +5,7 @@ pub mod backends;
 pub mod cli;
 mod components;
 pub mod config;
+mod discord;
 mod engine;
 mod icons;
 mod media_controls;

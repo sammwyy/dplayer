@@ -133,6 +133,10 @@ impl Icons {
             ),
             ("text", r#"<path d="M5 6h14M5 11h14M5 16h8"/>"#),
             (
+                "chat",
+                r#"<path d="M21 14a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/>"#,
+            ),
+            (
                 "shape",
                 r#"<rect x="3.5" y="3.5" width="10" height="10" rx="2"/><circle cx="15.5" cy="15.5" r="5"/>"#,
             ),

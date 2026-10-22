@@ -594,6 +594,39 @@ fn interface(state: &State) -> BoxedWidget {
                     }),
                 )],
             ),
+            section(
+                "Integrations",
+                vec![
+                    preference_row(
+                        state,
+                        "chat",
+                        "Discord Rich Presence",
+                        "Show the current track as your Discord status while Discord is running.",
+                        toggle(state, interface.discord_presence, |c| {
+                            c.interface.discord_presence = !c.interface.discord_presence
+                        }),
+                    ),
+                    preference_row(
+                        state,
+                        "text",
+                        "Only for tagged files",
+                        "Hide the status for files without artist metadata instead of showing the filename.",
+                        toggle(state, interface.discord_metadata_only, |c| {
+                            c.interface.discord_metadata_only =
+                                !c.interface.discord_metadata_only
+                        }),
+                    ),
+                    preference_row(
+                        state,
+                        "image",
+                        "Cover art",
+                        "Upload embedded artwork to catbox.moe so Discord can display it.",
+                        toggle(state, interface.discord_covers, |c| {
+                            c.interface.discord_covers = !c.interface.discord_covers
+                        }),
+                    ),
+                ],
+            ),
         ],
     )
 }

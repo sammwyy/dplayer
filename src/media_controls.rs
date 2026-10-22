@@ -79,19 +79,31 @@ impl PlayerState {
 
     pub(crate) fn publish_media(&self) {
         let session = self.media_session.borrow();
-        let Some(session) = session.as_ref() else {
+        let discord = self.discord.borrow();
+        if session.is_none() && discord.is_none() {
             return;
-        };
-        session.update(&self.media_snapshot());
+        }
+        let snapshot = self.media_snapshot();
+        let interface = self.config.peek().interface;
+        if let Some(session) = session.as_ref() {
+            session.update(&snapshot);
+        }
+        if let Some(discord) = discord.as_ref() {
+            discord.update(&snapshot, &interface);
+        }
     }
 
     pub(crate) fn announce_seek(&self, position: f64) {
+        let snapshot = MediaSnapshot {
+            position,
+            ..self.media_snapshot()
+        };
         if let Some(session) = self.media_session.borrow().as_ref() {
-            session.update(&MediaSnapshot {
-                position,
-                ..self.media_snapshot()
-            });
+            session.update(&snapshot);
             session.seeked(position);
+        }
+        if let Some(discord) = self.discord.borrow().as_ref() {
+            discord.update(&snapshot, &self.config.peek().interface);
         }
     }
 

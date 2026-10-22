@@ -47,6 +47,13 @@ pub struct InterfaceConfig {
     /// Slide and fade transitions for the playback controls.
     pub animations: bool,
     pub background_playback: bool,
+    /// Share the current track as a Discord rich presence.
+    pub discord_presence: bool,
+    /// Only publish a presence for files with artist metadata; untagged
+    /// files otherwise show their filename without the extension.
+    pub discord_metadata_only: bool,
+    /// Upload embedded cover art so the presence can display it.
+    pub discord_covers: bool,
     pub controls_width: ControlsWidth,
     pub time_display: TimeDisplay,
     /// Which backend draws the windows. Applies to newly opened windows.
@@ -258,6 +265,9 @@ impl Default for InterfaceConfig {
             autohide_delay: 3,
             animations: true,
             background_playback: false,
+            discord_presence: false,
+            discord_metadata_only: true,
+            discord_covers: true,
             controls_width: ControlsWidth::Default,
             time_display: TimeDisplay::Total,
             renderer: Renderer::Cpu,
@@ -350,6 +360,21 @@ mod tests {
         assert_eq!(config.playback.backend, PlaybackBackend::Mpv);
         let saved = toml::to_string(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&saved).unwrap(), config);
+    }
+
+    #[test]
+    fn discord_presence_defaults_off_and_round_trips() {
+        let config: Config =
+            toml::from_str("[interface]\ndiscord_presence = true\ndiscord_metadata_only = false\n")
+                .unwrap();
+        assert!(config.interface.discord_presence);
+        assert!(!config.interface.discord_metadata_only);
+        assert!(!Config::default().interface.discord_presence);
+        assert!(Config::default().interface.discord_metadata_only);
+        assert_eq!(
+            toml::from_str::<Config>(&toml::to_string(&config).unwrap()).unwrap(),
+            config
+        );
     }
 
     #[test]

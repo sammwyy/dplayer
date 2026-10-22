@@ -37,6 +37,13 @@ A native video and music player for Linux, built on
   lock screen, hardware keys). Title, artist, album, cover art and timeline
   are published; play/pause, stop, next/previous, seeking, volume, rate,
   shuffle and repeat can be driven from outside.
+- Optional Discord Rich Presence (off by default): the current track shows as
+  your Discord status — "Listening to"/"Watching" the player, title plus
+  "by \<artist\>", the embedded cover art, and a live progress bar while
+  playing. By default only files with artist metadata publish a presence;
+  untagged files can instead show their filename without extension.
+  Reconnects when Discord starts or restarts, and clears when the track stops
+  or the player exits.
 - Opaque windows and controls with live system-theme reload.
 - Keyboard-first: `space` play/pause · `←` `→` seek 5 s (`shift` = 30 s) ·
   `↑` `↓` volume · `f` maximize · `m` mute · `[` `]` speed ·
@@ -45,7 +52,8 @@ A native video and music player for Linux, built on
 - Settings window (`dplayer --settings`, or the gear in the top-left corner):
   available playback backends, startup volume / speed / repeat / shuffle,
   autoplay, seek steps, controls auto-hide delay, animations, bar width, style,
-  background opacity and blur, optional background playback with a Linux tray icon, accent color
+  background opacity and blur, optional background playback with a Linux tray
+  icon, optional Discord presence, accent color
   (automatic, system or a preset), music background and
   cover shape. Stored in `~/.config/dplayer/config.toml` and applied live to
   open players.
@@ -124,6 +132,17 @@ Runtime requirements: `ffprobe` and either a working libmpv installation or
 `ffmpeg` plus a working audio output (ALSA/PipeWire/PulseAudio via `rodio`).
 Linux builds link `libdbus-1` for
 MPRIS (`dbus-devel` / `libdbus-1-dev` at build time).
+
+Discord Rich Presence reports against the Discord application whose id is
+hardcoded as `CLIENT_ID` in `src/discord.rs` (`DPLAYER_DISCORD_CLIENT_ID`
+overrides it). IPC cannot receive image bytes, so cover art is sent as an
+external image URL: each embedded cover is re-encoded as a small JPEG and
+uploaded to [catbox.moe](https://catbox.moe) once per file (disable it under
+Settings → Interface → Cover art). When a track has no artwork, or uploading
+fails, the large image falls back to an art asset named `dplayer` uploaded to
+the Discord application (Rich Presence → Art Assets in the
+[developer portal](https://discord.com/developers/applications));
+`DPLAYER_DISCORD_ASSET` points it at a different key.
 
 ## Roadmap
 
