@@ -7,7 +7,7 @@ pub use decode::{DecodeSession, EngineEvent, VideoFrame};
 pub use probe::MediaInfo;
 
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -63,12 +63,68 @@ struct Inner {
     generation: u64,
 }
 
+pub struct RestartRequest {
+    info: MediaInfo,
+    pos: f64,
+    speed: f32,
+    generation: u64,
+    latest: Arc<AtomicU64>,
+    audio: bool,
+    events_tx: Sender<EngineEvent>,
+    video_tx: SyncSender<(u64, VideoFrame)>,
+}
+
+pub struct PreparedSession {
+    session: DecodeSession,
+    info: MediaInfo,
+    pos: f64,
+    speed: f32,
+    generation: u64,
+}
+
+impl RestartRequest {
+    pub fn spawn(self) -> Result<Option<PreparedSession>, String> {
+        if self.latest.load(Ordering::Acquire) != self.generation {
+            return Ok(None);
+        }
+        let (out_w, out_h) = self.info.output_size();
+        if self.info.has_video && (out_w == 0 || out_h == 0) {
+            return Err("video stream has no usable dimensions".into());
+        }
+        let session = DecodeSession::spawn(
+            &self.info.path,
+            self.pos,
+            self.speed,
+            self.info.video_stream,
+            self.info.audio_stream.filter(|_| self.audio),
+            out_w,
+            out_h,
+            self.events_tx,
+            self.video_tx,
+            self.generation,
+        )
+        .map_err(|e| format!("could not start ffmpeg: {e}"))?;
+        let prepared = PreparedSession {
+            session,
+            info: self.info,
+            pos: self.pos,
+            speed: self.speed,
+            generation: self.generation,
+        };
+        if self.latest.load(Ordering::Acquire) != self.generation {
+            return Ok(None);
+        }
+        Ok(Some(prepared))
+    }
+}
+
 pub struct Engine {
     events_tx: Sender<EngineEvent>,
     events_rx: Arc<Mutex<Receiver<EngineEvent>>>,
     video_tx: SyncSender<(u64, VideoFrame)>,
     video_rx: Arc<Mutex<Receiver<(u64, VideoFrame)>>>,
     audio: Option<AudioOutput>,
+    latest: Arc<AtomicU64>,
     inner: Mutex<Inner>,
 }
 
@@ -82,6 +138,7 @@ impl Engine {
             video_tx,
             video_rx: Arc::new(Mutex::new(video_rx)),
             audio: AudioOutput::open(),
+            latest: Arc::new(AtomicU64::new(0)),
             inner: Mutex::new(Inner {
                 session: None,
                 clock: AudioClock::default(),
@@ -111,41 +168,41 @@ impl Engine {
         self.video_rx.clone()
     }
 
-    pub fn start(&self, info: &MediaInfo, pos: f64, paused: bool) -> Result<(), String> {
-        self.spawn_session(info.clone(), pos, self.speed(), paused)
-    }
-
-    fn spawn_session(
-        &self,
-        info: MediaInfo,
-        pos: f64,
-        speed: f32,
-        paused: bool,
-    ) -> Result<(), String> {
-        let (out_w, out_h) = info.output_size();
-        let decode_audio = info.has_audio && self.audio.is_some();
+    pub fn request_session(&self, info: MediaInfo, pos: f64, speed: f32) -> RestartRequest {
         let mut inner = self.inner.lock().unwrap();
         inner.generation += 1;
-        // Drain queued frames from the previous session to free bounded channel capacity.
+        self.latest.store(inner.generation, Ordering::Release);
         if let Ok(rx) = self.video_rx.try_lock() {
             while rx.try_recv().is_ok() {}
         }
-        let generation = inner.generation;
-        let session = DecodeSession::spawn(
-            &info.path,
+        RestartRequest {
+            audio: info.has_audio && self.audio.is_some(),
+            info,
             pos,
             speed,
-            info.has_video,
-            decode_audio,
-            out_w,
-            out_h,
-            self.events_tx.clone(),
-            self.video_tx.clone(),
-            generation,
-        )
-        .map_err(|e| format!("could not start ffmpeg: {e}"))?;
+            generation: inner.generation,
+            latest: self.latest.clone(),
+            events_tx: self.events_tx.clone(),
+            video_tx: self.video_tx.clone(),
+        }
+    }
 
-        let mut session = session;
+    /// Returns false if a newer request superseded this subprocess.
+    pub fn activate(&self, prepared: PreparedSession, initial_paused: Option<bool>) -> bool {
+        let PreparedSession {
+            mut session,
+            info,
+            pos,
+            speed,
+            generation,
+        } = prepared;
+        let (out_w, out_h) = info.output_size();
+        let mut inner = self.inner.lock().unwrap();
+        if inner.generation != generation {
+            return false;
+        }
+        let paused = initial_paused.unwrap_or(inner.paused);
+        inner.session = None;
         if let Some(player) = self.audio.as_ref() {
             if let Some(rx) = session.audio_rx.take() {
                 inner.clock = player.play_stream(rx);
@@ -165,7 +222,7 @@ impl Engine {
         inner.base = pos;
         inner.speed = speed;
         inner.paused = paused;
-        inner.has_audio = decode_audio;
+        inner.has_audio = info.has_audio && self.audio.is_some();
         inner.has_video = info.has_video;
         inner.path = info.path;
         inner.out_w = out_w;
@@ -175,11 +232,13 @@ impl Engine {
         inner.exited = false;
         inner.exit_code = 0;
         inner.exit_tail.clear();
-        Ok(())
+        true
     }
 
     pub fn stop(&self) {
         let mut inner = self.inner.lock().unwrap();
+        inner.generation += 1;
+        self.latest.store(inner.generation, Ordering::Release);
         inner.session = None;
         inner.exited = false;
         if let Some(player) = &self.audio {
@@ -217,10 +276,6 @@ impl Engine {
                 inner.resume = Instant::now();
             }
         }
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.inner.lock().unwrap().paused
     }
 
     pub fn position(&self) -> f64 {
@@ -270,27 +325,9 @@ impl Engine {
         self.inner.lock().unwrap().exit_tail.clone()
     }
 
-    pub fn seek(&self, info: &MediaInfo, pos: f64) {
-        let (speed, paused) = {
-            let inner = self.inner.lock().unwrap();
-            (inner.speed, inner.paused)
-        };
-        let _ = self.spawn_session(info.clone(), pos.max(0.0), speed, paused);
-    }
-
     /// Sets the rate used by the next session without spawning one.
     pub fn prime_speed(&self, speed: f32) {
         self.inner.lock().unwrap().speed = speed;
-    }
-
-    pub fn speed(&self) -> f32 {
-        self.inner.lock().unwrap().speed
-    }
-
-    pub fn set_speed(&self, info: &MediaInfo, speed: f32) {
-        let pos = self.position();
-        let paused = self.is_paused();
-        let _ = self.spawn_session(info.clone(), pos, speed, paused);
     }
 
     pub fn set_volume(&self, volume: f32) {
@@ -309,5 +346,40 @@ impl Drop for Engine {
         if let Ok(mut inner) = self.inner.lock() {
             inner.session = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn superseded_request_never_starts_decoder() {
+        let (events_tx, _) = channel();
+        let (video_tx, _) = std::sync::mpsc::sync_channel(1);
+        let request = RestartRequest {
+            info: MediaInfo {
+                path: PathBuf::from("/nonexistent/dplayer-test"),
+                title: String::new(),
+                artist: None,
+                album: None,
+                duration: 0.0,
+                has_video: false,
+                has_audio: true,
+                video_stream: None,
+                audio_stream: Some(0),
+                attached_picture: false,
+                width: 0,
+                height: 0,
+            },
+            pos: 0.0,
+            speed: 1.0,
+            generation: 1,
+            latest: Arc::new(AtomicU64::new(2)),
+            audio: true,
+            events_tx,
+            video_tx,
+        };
+        assert!(request.spawn().unwrap().is_none());
     }
 }

@@ -107,3 +107,30 @@ impl Source for PipeSource {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::sync_channel;
+
+    #[test]
+    fn underrun_does_not_advance_media_clock() {
+        let (tx, rx) = sync_channel(1);
+        let mut output = PipeSource {
+            rx,
+            pending: Vec::new(),
+            cursor: 0,
+            closed: false,
+            played: Arc::new(AtomicU64::new(0)),
+            drained: Arc::new(AtomicBool::new(false)),
+        };
+        assert_eq!(output.next(), Some(0.0));
+        assert_eq!(output.played.load(Ordering::Relaxed), 0);
+        tx.send(1.0f32.to_le_bytes().to_vec()).unwrap();
+        assert_eq!(output.next(), Some(1.0));
+        assert_eq!(output.played.load(Ordering::Relaxed), 1);
+        drop(tx);
+        assert_eq!(output.next(), None);
+        assert!(output.drained.load(Ordering::Relaxed));
+    }
+}

@@ -57,12 +57,19 @@ ffmpeg  ── video: -f rawvideo rgba  → fd 3 → ImageData → creamui Image
         └─ audio: -f f32le 48kHz    → fd 4 → rodio Player → default device
 ```
 
-- `-readrate N` paces both pipes off the same input clock, so audio and
-  video stay naturally coupled; playback speed adds `atempo=N`.
+- `-readrate N` paces demuxing and playback speed adds `atempo=N`.
+  Raw video frames do not carry timestamps through the pipe, so this
+  does not provide frame-accurate A/V synchronization under decoder stalls.
 - Pause is `SIGSTOP` on the decoder plus `Player::pause()`; resume is
   `SIGCONT` + `play()`.
-- Seek re-spawns the decoder with `-ss`. Every session is tagged with a
-  generation so late frames/exits from a killed process are dropped.
+- Seek and rate changes prepare a new decoder on a background worker; the
+  previous session is replaced on the UI thread only after the new process
+  starts successfully. Every session is tagged with a generation so late
+  frames/exits from superseded processes are dropped. The initial decoder
+  also starts off the UI thread.
+- Video is decoded to bounded RGBA frames (maximum 1600 px per side) with
+  a two-frame channel; audio uses a small bounded PCM queue. This is a
+  software decode / CPU-to-UI copy path, not hardware-accelerated video output.
 
 ## Install
 

@@ -9,7 +9,25 @@ use std::thread;
 pub const AUDIO_RATE: u32 = 48_000;
 pub const AUDIO_CHANNELS: u32 = 2;
 const AUDIO_CHUNK: usize = 16 * 1024;
-const MAX_WIDTH: u32 = 1600;
+
+fn forward_audio(mut pipe: impl Read, tx: SyncSender<Vec<u8>>) {
+    let mut buf = vec![0u8; AUDIO_CHUNK];
+    let mut leftover = 0;
+    loop {
+        match pipe.read(&mut buf[leftover..]) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => {
+                let total = leftover + n;
+                let aligned = total & !3;
+                if aligned > 0 && tx.send(buf[..aligned].to_vec()).is_err() {
+                    return;
+                }
+                leftover = total - aligned;
+                buf.copy_within(aligned..total, 0);
+            }
+        }
+    }
+}
 
 pub struct VideoFrame {
     pub width: u32,
@@ -32,6 +50,10 @@ fn ffmpeg_args(
     path: &std::path::Path,
     pos: f64,
     speed: f32,
+    video_stream: Option<usize>,
+    audio_stream: Option<usize>,
+    out_w: u32,
+    out_h: u32,
     video_dest: Option<&str>,
     audio_dest: Option<&str>,
 ) -> Vec<String> {
@@ -46,17 +68,25 @@ fn ffmpeg_args(
     }
     // Pace demuxing at `speed` times realtime; combined with `atempo` on the
     // audio stream, this scales playback rate while keeping A/V synchronized.
-    args.extend(["-readrate".into(), format!("{speed:.4}")]);
+    args.extend([
+        "-readrate".into(),
+        format!("{speed:.4}"),
+        "-readrate_initial_burst".into(),
+        "0.25".into(),
+    ]);
     args.extend(["-i".into(), path.to_string_lossy().into_owned()]);
-    if let Some(video_dest) = video_dest {
+    if let (Some(index), Some(video_dest)) = (video_stream, video_dest) {
         args.extend([
             "-map".into(),
-            "0:v:0".into(),
+            format!("0:{index}"),
             "-an".into(),
             "-sn".into(),
             "-dn".into(),
             "-vf".into(),
-            format!("scale='min({MAX_WIDTH},iw)':-2,setsar=1,fps=30"),
+            format!(
+                "fps={:.4},scale={out_w}:{out_h},setsar=1",
+                30.0 / speed.max(1.0)
+            ),
             "-f".into(),
             "rawvideo".into(),
             "-pix_fmt".into(),
@@ -64,10 +94,10 @@ fn ffmpeg_args(
             video_dest.into(),
         ]);
     }
-    if let Some(audio_dest) = audio_dest {
+    if let (Some(index), Some(audio_dest)) = (audio_stream, audio_dest) {
         args.extend([
             "-map".into(),
-            "0:a:0".into(),
+            format!("0:{index}"),
             "-vn".into(),
             "-sn".into(),
             "-dn".into(),
@@ -97,8 +127,8 @@ impl DecodeSession {
         path: &std::path::Path,
         pos: f64,
         speed: f32,
-        has_video: bool,
-        has_audio: bool,
+        video_stream: Option<usize>,
+        audio_stream: Option<usize>,
         out_w: u32,
         out_h: u32,
         events_tx: Sender<EngineEvent>,
@@ -110,15 +140,23 @@ impl DecodeSession {
             control,
             video_reader,
             audio_reader,
-        } = backends::spawn_ffmpeg(has_video, has_audio, |video_dest, audio_dest| {
-            ffmpeg_args(
-                path,
-                pos,
-                speed,
-                has_video.then_some(video_dest),
-                has_audio.then_some(audio_dest),
-            )
-        })?;
+        } = backends::spawn_ffmpeg(
+            video_stream.is_some(),
+            audio_stream.is_some(),
+            |video_dest, audio_dest| {
+                ffmpeg_args(
+                    path,
+                    pos,
+                    speed,
+                    video_stream,
+                    audio_stream,
+                    out_w,
+                    out_h,
+                    video_stream.map(|_| video_dest),
+                    audio_stream.map(|_| audio_dest),
+                )
+            },
+        )?;
 
         let stderr = child.stderr.take();
         let waiter = thread::spawn(move || {
@@ -134,20 +172,26 @@ impl DecodeSession {
         });
 
         if let Some(mut pipe) = video_reader {
-            let frame_len = (out_w * out_h * 4) as usize;
+            let frame_len = (out_w as usize * out_h as usize * 4).max(1);
             thread::spawn(move || {
-                let mut pixels = vec![0u8; frame_len.max(1)];
+                let mut pixels = vec![0u8; frame_len];
                 loop {
                     match pipe.read_exact(&mut pixels) {
                         Ok(()) => {
                             let frame = VideoFrame {
                                 width: out_w,
                                 height: out_h,
-                                pixels: pixels.clone(),
+                                pixels,
                             };
                             // Drop frames if the UI receiver is full so video
                             // decoding does not block on rendering.
-                            let _ = video_tx.try_send((generation, frame));
+                            match video_tx.try_send((generation, frame)) {
+                                Ok(()) => pixels = vec![0u8; frame_len],
+                                Err(std::sync::mpsc::TrySendError::Full((_, frame))) => {
+                                    pixels = frame.pixels;
+                                }
+                                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return,
+                            }
                         }
                         Err(_) => return,
                     }
@@ -155,21 +199,9 @@ impl DecodeSession {
             });
         }
 
-        let audio_rx = if let Some(mut pipe) = audio_reader {
-            let (tx, rx) = sync_channel::<Vec<u8>>(32);
-            thread::spawn(move || {
-                let mut buf = vec![0u8; AUDIO_CHUNK];
-                loop {
-                    match pipe.read(&mut buf) {
-                        Ok(0) | Err(_) => return,
-                        Ok(n) => {
-                            if tx.send(buf[..n].to_vec()).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
-            });
+        let audio_rx = if let Some(pipe) = audio_reader {
+            let (tx, rx) = sync_channel::<Vec<u8>>(8);
+            thread::spawn(move || forward_audio(pipe, tx));
             Some(rx)
         } else {
             None
@@ -194,5 +226,69 @@ impl DecodeSession {
 impl Drop for DecodeSession {
     fn drop(&mut self) {
         self.control.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ShortReads<'a>(&'a [u8]);
+    impl Read for ShortReads<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.0.len()).min(3);
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn pcm_chunks_preserve_samples_across_short_reads() {
+        let samples = [1.0f32, -0.25, 0.5];
+        let bytes: Vec<_> = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        let (tx, rx) = sync_channel(4);
+        forward_audio(ShortReads(&bytes), tx);
+        let chunks: Vec<_> = rx.into_iter().collect();
+        assert!(chunks.iter().all(|chunk| chunk.len() % 4 == 0));
+        assert_eq!(chunks.concat(), bytes);
+    }
+
+    #[test]
+    fn maps_actual_stream_indices_not_first_video_or_audio() {
+        let args = ffmpeg_args(
+            std::path::Path::new("video.mkv"),
+            0.0,
+            1.0,
+            Some(3),
+            Some(2),
+            1280,
+            720,
+            Some("pipe:3"),
+            Some("pipe:4"),
+        );
+        let maps: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-map")
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(maps, ["0:3", "0:2"]);
+        let fast = ffmpeg_args(
+            std::path::Path::new("video.mkv"),
+            10.0,
+            2.0,
+            Some(3),
+            Some(2),
+            1280,
+            720,
+            Some("pipe:3"),
+            Some("pipe:4"),
+        );
+        assert!(fast
+            .windows(2)
+            .any(|pair| pair[0] == "-vf" && pair[1].starts_with("fps=15.0000,scale=")));
     }
 }

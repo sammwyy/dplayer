@@ -775,6 +775,7 @@ dependencies = [
  "dbus",
  "delib",
  "libc",
+ "libloading",
  "rfd",
  "rodio",
  "serde",

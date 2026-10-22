@@ -12,6 +12,8 @@ pub struct MediaInfo {
     pub duration: f64,
     pub has_video: bool,
     pub has_audio: bool,
+    pub video_stream: Option<usize>,
+    pub audio_stream: Option<usize>,
     /// True if the file contains an attached picture stream (embedded cover art).
     pub attached_picture: bool,
     /// Display dimensions after applying stream rotation metadata.
@@ -20,11 +22,14 @@ pub struct MediaInfo {
 }
 
 impl MediaInfo {
-    /// Scaled output dimensions matching the `scale='min(1600,iw)':-2` video filter.
+    /// Scaled output dimensions used by the video filter.
     pub fn output_size(&self) -> (u32, u32) {
-        let w = self.width.min(1600);
-        let h = (self.height as u64 * w as u64 / self.width.max(1) as u64) as u32;
-        (w, h & !1)
+        if self.width == 0 || self.height == 0 {
+            return (0, 0);
+        }
+        let scale = (1600.0 / self.width.max(self.height) as f64).min(1.0);
+        let even = |dimension: u32| ((dimension as f64 * scale / 2.0).round() as u32 * 2).max(2);
+        (even(self.width), even(self.height))
     }
 }
 
@@ -37,6 +42,7 @@ struct Probe {
 
 #[derive(Deserialize)]
 struct Stream {
+    index: usize,
     codec_type: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
@@ -164,8 +170,36 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         duration,
         has_video: video.is_some(),
         has_audio: audio.is_some(),
+        video_stream: video.map(|s| s.index),
+        audio_stream: audio.map(|s| s.index),
         attached_picture: picture.is_some(),
         width,
         height,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_is_bounded_for_large_portrait_and_landscape_videos() {
+        let mut info = MediaInfo {
+            path: PathBuf::new(),
+            title: String::new(),
+            artist: None,
+            album: None,
+            duration: 0.0,
+            has_video: true,
+            has_audio: false,
+            video_stream: Some(0),
+            audio_stream: None,
+            attached_picture: false,
+            width: 3840,
+            height: 2160,
+        };
+        assert_eq!(info.output_size(), (1600, 900));
+        std::mem::swap(&mut info.width, &mut info.height);
+        assert_eq!(info.output_size(), (900, 1600));
+    }
 }

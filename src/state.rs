@@ -86,6 +86,7 @@ pub struct PlayerState {
     last_pos: Rc<Cell<(f32, f32)>>,
     /// Monotonic token used to discard async `ffprobe` results from superseded track loads.
     pub load_token: Rc<AtomicU64>,
+    pending_restart: Rc<Cell<Option<u64>>>,
     pub rng: Rc<Cell<u64>>,
 }
 
@@ -138,6 +139,7 @@ impl PlayerState {
             last_move: Rc::new(Cell::new(Instant::now())),
             last_pos: Rc::new(Cell::new((0.0, 0.0))),
             load_token: Rc::new(AtomicU64::new(0)),
+            pending_restart: Rc::new(Cell::new(None)),
             rng: Rc::new(Cell::new(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -325,7 +327,32 @@ impl PlayerState {
                     return;
                 }
                 match result {
-                    Ok((info, cover)) => state.start_media(info, cover),
+                    Ok((info, cover)) => {
+                        let request =
+                            state
+                                .engine
+                                .request_session(info.clone(), 0.0, state.speed.peek());
+                        let generation = state.engine.generation();
+                        let ready = state.clone();
+                        state.app.spawn_background(
+                            move || request.spawn(),
+                            move |result| {
+                                if ready.load_token.load(Ordering::Relaxed) != token
+                                    || ready.engine.generation() != generation
+                                {
+                                    return;
+                                }
+                                match result {
+                                    Ok(Some(session)) => ready.start_media(info, cover, session),
+                                    Ok(None) => {}
+                                    Err(error) => {
+                                        ready.status.set(Status::Error(error));
+                                        ready.playing.set(false);
+                                    }
+                                }
+                            },
+                        );
+                    }
                     Err(error) => {
                         state.status.set(Status::Error(error));
                         state.playing.set(false);
@@ -335,7 +362,13 @@ impl PlayerState {
         );
     }
 
-    fn start_media(&self, info: MediaInfo, cover: Option<crate::artwork::Artwork>) {
+    fn start_media(
+        &self,
+        info: MediaInfo,
+        cover: Option<crate::artwork::Artwork>,
+        session: engine::PreparedSession,
+    ) {
+        self.pending_restart.set(None);
         let art = cover.map(|art| art.into_images());
         self.set_media_accent(art.as_ref().and_then(|art| art.accent));
         *self.cover_art.borrow_mut() = art.as_ref().map(|art| art.encoded.clone());
@@ -344,24 +377,17 @@ impl PlayerState {
         self.cover.set(cover);
         self.backdrop.set(backdrop);
         let autoplay = self.config.peek().playback.autoplay;
-        match self.engine.start(&info, 0.0, !autoplay) {
-            Ok(()) => {
-                self.duration.set(info.duration);
-                self.position.set(0.0);
-                self.media.set(Some(info));
-                self.status.set(Status::Playing);
-                self.playing.set(autoplay);
-            }
-            Err(error) => {
-                self.media.set(None);
-                self.status.set(Status::Error(error));
-                self.playing.set(false);
-            }
-        }
+        self.engine.activate(session, Some(!autoplay));
+        self.duration.set(info.duration);
+        self.position.set(0.0);
+        self.media.set(Some(info));
+        self.status.set(Status::Playing);
+        self.playing.set(autoplay);
     }
 
     fn stop_session(&self) {
         self.next_load_token();
+        self.pending_restart.set(None);
         self.engine.stop();
         self.frame.set(None);
         self.cover.set(None);
@@ -400,16 +426,59 @@ impl PlayerState {
         let Some(media) = self.media.get() else {
             return;
         };
-        let pos = pos.clamp(0.0, self.duration.get().max(pos));
+        let pos = pos.clamp(
+            0.0,
+            if self.duration.get() > 0.0 {
+                self.duration.get()
+            } else {
+                f64::MAX
+            },
+        );
         self.position.set(pos);
-        self.engine.seek(&media, pos);
-        self.sync_pause_flag();
+        self.restart(media, pos, self.speed.peek());
         self.announce_seek(pos);
     }
 
     pub fn seek_by(&self, delta: f64) {
-        let pos = (self.engine.position() + delta).max(0.0);
-        self.seek_to(pos.min(self.duration.get().max(pos)));
+        let pos = (self.current_position() + delta).max(0.0);
+        self.seek_to(pos);
+    }
+
+    fn current_position(&self) -> f64 {
+        if self.pending_restart.get().is_some() {
+            self.position.peek()
+        } else {
+            self.engine.position()
+        }
+    }
+
+    fn restart(&self, media: MediaInfo, pos: f64, speed: f32) {
+        let request = self.engine.request_session(media, pos, speed);
+        let generation = self.engine.generation();
+        self.pending_restart.set(Some(generation));
+        let state = self.clone();
+        self.app.spawn_background(
+            move || request.spawn(),
+            move |result| {
+                if state.pending_restart.get() != Some(generation)
+                    || state.engine.generation() != generation
+                {
+                    return;
+                }
+                state.pending_restart.set(None);
+                match result {
+                    Ok(Some(session)) => {
+                        state.engine.activate(session, None);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        state.engine.stop();
+                        state.playing.set(false);
+                        state.status.set(Status::Error(error));
+                    }
+                }
+            },
+        );
     }
 
     pub fn begin_scrub(&self, fraction: f64) {
@@ -466,8 +535,9 @@ impl PlayerState {
         let speed = speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1]);
         self.speed.set(speed);
         if let Some(media) = self.media.get() {
-            self.engine.set_speed(&media, speed);
-            self.sync_pause_flag();
+            self.restart(media, self.current_position(), speed);
+        } else {
+            self.engine.prime_speed(speed);
         }
     }
 
@@ -512,7 +582,7 @@ impl PlayerState {
     }
 
     pub fn prev(&self) {
-        if self.engine.position() > 3.0 || !self.advance(false) {
+        if self.current_position() > 3.0 || !self.advance(false) {
             self.seek_to(0.0);
         }
     }
@@ -583,7 +653,14 @@ impl PlayerState {
         let rx = self.engine.video();
         let state = self.clone();
         self.app.spawn_background(
-            move || rx.lock().unwrap().recv().ok(),
+            move || {
+                let rx = rx.lock().unwrap();
+                let mut frame = rx.recv().ok()?;
+                while let Ok(newest) = rx.try_recv() {
+                    frame = newest;
+                }
+                Some(frame)
+            },
             move |frame| {
                 if let Some((gen, f)) = frame {
                     if gen == state.engine.generation() {
@@ -626,8 +703,16 @@ impl PlayerState {
             return;
         }
         if self.scrub.peek().is_none() {
-            let pos = self.engine.position().min(self.duration.get().max(0.0));
+            let pos = self.current_position();
+            let pos = if self.duration.get() > 0.0 {
+                pos.min(self.duration.get())
+            } else {
+                pos
+            };
             self.position.set_if_changed(pos);
+        }
+        if self.pending_restart.get().is_some() {
+            return;
         }
         if self.engine.ended() {
             self.on_track_end();
@@ -640,12 +725,6 @@ impl PlayerState {
             }));
             self.playing.set(false);
         }
-    }
-
-    /// Re-applies the pause state after operations (`seek`, `set_speed`) that
-    /// respawn the decoder subprocess.
-    fn sync_pause_flag(&self) {
-        self.engine.set_paused(!self.playing.peek());
     }
 
     pub fn is_maximized(&self) -> bool {
