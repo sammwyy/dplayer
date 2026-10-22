@@ -90,7 +90,6 @@ where
 
     unsafe {
         command.pre_exec(move || {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
             // Avoid clobbering either pipe write end if its fd already
             // matches the other stream's target descriptor.
             let mut v = video_w;

@@ -460,6 +460,7 @@ impl PlayerState {
                                     Ok(Some(session)) => ready.start_media(info, cover, session),
                                     Ok(None) => {}
                                     Err(error) => {
+                                        eprintln!("dplayer: session spawn failed: {error}");
                                         ready.status.set(Status::Error(error));
                                         ready.playing.set(false);
                                     }
