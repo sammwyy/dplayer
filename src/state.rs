@@ -1,5 +1,5 @@
 use crate::config::{Accent, Config, RepeatMode};
-use crate::engine::{self, Engine, EngineEvent, MediaInfo};
+use crate::engine::{self, Engine, EngineEvent, MediaInfo, SubtitleSource};
 use crate::icons::Icons;
 use creamui_image::ImageData;
 use creamui_reactive::Signal;
@@ -60,6 +60,8 @@ pub struct PlayerState {
     pub repeat: Signal<Repeat>,
     pub shuffle: Signal<bool>,
     pub queue_open: Signal<bool>,
+    pub subtitles_open: Signal<bool>,
+    pub subtitle: Signal<Option<SubtitleSource>>,
     pub controls_visible: Signal<bool>,
     pub frame: Signal<Option<ImageData>>,
     pub cover: Signal<Option<ImageData>>,
@@ -74,6 +76,7 @@ pub struct PlayerState {
     pub(crate) track_serial: Rc<Cell<u64>>,
     pub(crate) media_session: Rc<RefCell<Option<crate::backends::MediaSession>>>,
     pub queue_scroll: ScrollController,
+    pub subtitles_scroll: ScrollController,
     pub config: Signal<Config>,
     /// Chrome slide progress: 0.0 fully hidden, 1.0 fully shown.
     pub chrome_progress: Signal<f32>,
@@ -121,6 +124,8 @@ impl PlayerState {
             }),
             shuffle: Signal::new(playback.shuffle),
             queue_open: Signal::new(false),
+            subtitles_open: Signal::new(false),
+            subtitle: Signal::new(None),
             frame: Signal::new(None),
             cover: Signal::new(None),
             backdrop: Signal::new(None),
@@ -130,6 +135,7 @@ impl PlayerState {
             track_serial: Rc::new(Cell::new(0)),
             media_session: Rc::new(RefCell::new(None)),
             queue_scroll: ScrollController::new(0.0),
+            subtitles_scroll: ScrollController::new(0.0),
             config: Signal::new(config),
             chrome_progress: Signal::new(1.0),
             chrome_animating: Rc::new(Cell::new(false)),
@@ -267,7 +273,11 @@ impl PlayerState {
             Some(media) if media.has_video => {}
             _ => return true,
         }
-        if !self.playing.get() || self.scrub.peek().is_some() || self.queue_open.get() {
+        if !self.playing.get()
+            || self.scrub.peek().is_some()
+            || self.queue_open.get()
+            || self.subtitles_open.get()
+        {
             return true;
         }
         let delay = self.config.peek().interface.autohide_delay.max(1);
@@ -397,6 +407,8 @@ impl PlayerState {
         self.next_load_token();
         self.pending_restart.set(None);
         self.engine.stop();
+        self.subtitle.set(None);
+        self.subtitles_open.set(false);
         self.frame.set(None);
         self.cover.set(None);
         self.backdrop.set(None);
@@ -491,6 +503,20 @@ impl PlayerState {
                 }
             },
         );
+    }
+
+    pub fn select_subtitle(&self, subtitle: Option<SubtitleSource>) {
+        if self.subtitle.peek() == subtitle {
+            self.subtitles_open.set(false);
+            return;
+        }
+        self.subtitle.set(subtitle.clone());
+        self.subtitles_open.set(false);
+        if !self.engine.set_subtitle(subtitle) {
+            if let Some(media) = self.media.peek() {
+                self.restart(media, self.current_position(), self.speed.peek());
+            }
+        }
     }
 
     pub fn begin_scrub(&self, fraction: f64) {

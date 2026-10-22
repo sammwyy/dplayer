@@ -12,8 +12,14 @@ impl Icons {
         let paths: &[(&'static str, &str)] = &[
             ("play", r#"<path d="M8 5.5v13l11-6.5Z"/>"#),
             ("pause", r#"<path d="M8 5v14M16 5v14" stroke-width="2.4"/>"#),
-            ("next", r#"<path d="M6 5.5v13l9-6.5Z"/><path d="M17 5v14" stroke-width="2.2"/>"#),
-            ("prev", r#"<path d="M18 5.5v13l-9-6.5Z"/><path d="M7 5v14" stroke-width="2.2"/>"#),
+            (
+                "next",
+                r#"<path d="M6 5.5v13l9-6.5Z"/><path d="M17 5v14" stroke-width="2.2"/>"#,
+            ),
+            (
+                "prev",
+                r#"<path d="M18 5.5v13l-9-6.5Z"/><path d="M7 5v14" stroke-width="2.2"/>"#,
+            ),
             (
                 "shuffle",
                 r#"<path d="M16 4h4v4M20 4l-7.5 7.5M16 20h4v-4M20 20l-7.5-7.5M4 8h3l2.5 2.5M4 16h3l2.5-2.5"/>"#,
@@ -43,13 +49,20 @@ impl Icons {
                 r#"<path d="M4 6h16M4 11h16M4 16h9"/><circle cx="18.5" cy="17.5" r="2.6"/><path d="M18.5 15v-1.5" stroke-width="1.2"/>"#,
             ),
             (
+                "subtitles",
+                r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M5 13h6M5 16h4M14 13h5M13 16h6"/>"#,
+            ),
+            (
                 "open",
                 r#"<path d="M3 8V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2"/><path d="M3 8h18l-2 11a2 2 0 0 1-2 1.6H7A2 2 0 0 1 5 19L3 8Z"/>"#,
             ),
             ("plus", r#"<path d="M12 5v14M5 12h14"/>"#),
             ("close", r#"<path d="m6 6 12 12M6 18 18 6"/>"#),
             ("minimize", r#"<path d="M5 12h14"/>"#),
-            ("maximize", r#"<rect x="5" y="5" width="14" height="14" rx="2"/>"#),
+            (
+                "maximize",
+                r#"<rect x="5" y="5" width="14" height="14" rx="2"/>"#,
+            ),
             (
                 "music",
                 r#"<path d="M9.5 18.5V6l11-2.2V17"/><ellipse cx="6.8" cy="18.5" rx="2.8" ry="2.5"/><ellipse cx="17.6" cy="17" rx="2.8" ry="2.5"/>"#,
@@ -90,8 +103,14 @@ impl Icons {
                 "info",
                 r#"<circle cx="12" cy="12" r="9.5"/><path d="M12 11v5.5M12 7.6v.1" stroke-width="1.9"/>"#,
             ),
-            ("timer", r#"<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M10 2.5h4"/>"#),
-            ("clock", r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#),
+            (
+                "timer",
+                r#"<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M10 2.5h4"/>"#,
+            ),
+            (
+                "clock",
+                r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#,
+            ),
             (
                 "panel",
                 r#"<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 15h10"/>"#,
@@ -104,14 +123,23 @@ impl Icons {
                 "image",
                 r#"<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.8"/><path d="m21 15-5-5L5 20"/>"#,
             ),
-            ("forward", r#"<path d="M4 6.5v11l7-5.5Z"/><path d="M13 6.5v11l7-5.5Z"/>"#),
+            (
+                "forward",
+                r#"<path d="M4 6.5v11l7-5.5Z"/><path d="M13 6.5v11l7-5.5Z"/>"#,
+            ),
             ("text", r#"<path d="M5 6h14M5 11h14M5 16h8"/>"#),
             (
                 "shape",
                 r#"<rect x="3.5" y="3.5" width="10" height="10" rx="2"/><circle cx="15.5" cy="15.5" r="5"/>"#,
             ),
-            ("refresh", r#"<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>"#),
-            ("check", r#"<path d="m5 12.5 4.5 4.5L19 7.5" stroke-width="2.2"/>"#),
+            (
+                "refresh",
+                r#"<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>"#,
+            ),
+            (
+                "check",
+                r#"<path d="m5 12.5 4.5 4.5L19 7.5" stroke-width="2.2"/>"#,
+            ),
         ];
         let mut glyphs = HashMap::new();
         for (name, path) in paths {

@@ -4,25 +4,79 @@ use creamui_widgets::AppTitlebar;
 
 pub const HEIGHT: f32 = 40.0;
 
+fn action(
+    p: &PlayerState,
+    dark: bool,
+    icon: &str,
+    active: bool,
+    click: impl Fn() + 'static,
+) -> BoxedWidget {
+    if !dark {
+        return icon_button(p, icon, active, click);
+    }
+    Box::new(
+        RawButton::new(
+            Style {
+                justify_content: Some(JustifyContent::Center),
+                ..fixed(32.0, 32.0)
+            },
+            click,
+        )
+        .keyboard_focus(false)
+        .background(if active {
+            Color::rgb(55, 55, 55)
+        } else {
+            BLACK
+        })
+        .corner_radius(8.0)
+        .hover_style(StateStyle::new().background(Color::rgb(45, 45, 45)))
+        .child(glyph(p, icon, 17.0, Color::rgb(255, 255, 255))),
+    )
+}
+
 pub fn build(p: &PlayerState, reveal: f32, width: f32) -> BoxedWidget {
     let media = p.media.get();
-    let video = media.as_ref().is_some_and(|m| m.has_video) && p.status.get() == Status::Playing;
+    let dark = p.status.get() == Status::Playing;
+    let video = media.as_ref().is_some_and(|m| m.has_video) && dark;
+    let queue = p.clone();
+    let mut actions = vec![
+        action(p, dark, "settings", false, crate::app::open_settings),
+        action(p, dark, "queue", p.queue_open.get(), move || {
+            queue.subtitles_open.set(false);
+            queue.queue_open.set(!queue.queue_open.get());
+        }),
+    ];
+    if video {
+        let subtitles = p.clone();
+        actions.push(action(
+            p,
+            dark,
+            "subtitles",
+            p.subtitles_open.get(),
+            move || {
+                subtitles.queue_open.set(false);
+                subtitles
+                    .subtitles_open
+                    .set(!subtitles.subtitles_open.get());
+            },
+        ));
+    }
     let mut bar = AppTitlebar::new(width)
         .height(HEIGHT)
-        .start_boxed(icon_button(p, "settings", false, crate::app::open_settings));
+        .start_boxed(view(row(2.0), actions));
     if video {
         let title = media.map(|m| m.title).unwrap_or_default();
         bar = bar.foreground(Color::rgb(255, 255, 255)).center(
             Text::new(ellipsize(&title, ((width - 260.0) / 7.5).max(8.0) as usize))
                 .font_size(13.0)
                 .bold(true)
-                .color(Color::rgba(255, 255, 255, 235)),
+                .color(Color::rgb(255, 255, 255)),
         );
     }
-    let background: creamui_core::Background = if video {
-        creamui_core::LinearGradient::new(180.0, Color::rgba(0, 0, 0, 130), CLEAR).into()
+    let background: creamui_core::Background = if dark {
+        BLACK.into()
     } else {
-        CLEAR.into()
+        use_theme().colors.surface.into()
     };
     Box::new(
         bar.layout(Style {

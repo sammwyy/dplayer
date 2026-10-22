@@ -2,6 +2,50 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubtitleSource {
+    Embedded { index: usize, ordinal: usize },
+    External(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+pub struct SubtitleTrack {
+    pub source: SubtitleSource,
+    pub label: String,
+}
+
+fn external_subtitles(path: &Path) -> Vec<SubtitleTrack> {
+    let Some(parent) = path.parent() else {
+        return Vec::new();
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut tracks: Vec<_> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let file = entry.path();
+            let ext = file.extension()?.to_str()?;
+            (file.file_stem() == path.file_stem()
+                && ["ass", "ssa", "srt", "vtt"]
+                    .iter()
+                    .any(|supported| ext.eq_ignore_ascii_case(supported))
+                && file.is_file())
+            .then(|| SubtitleTrack {
+                label: format!("{} (file)", ext.to_uppercase()),
+                source: SubtitleSource::External(file.clone()),
+            })
+        })
+        .collect();
+    tracks.sort_by(|a, b| a.label.cmp(&b.label));
+    tracks
+}
+
 #[derive(Debug, Clone)]
 pub struct MediaInfo {
     pub path: PathBuf,
@@ -14,6 +58,7 @@ pub struct MediaInfo {
     pub has_audio: bool,
     pub video_stream: Option<usize>,
     pub audio_stream: Option<usize>,
+    pub subtitles: Vec<SubtitleTrack>,
     /// True if the file contains an attached picture stream (embedded cover art).
     pub attached_picture: bool,
     /// Display dimensions after applying stream rotation metadata.
@@ -44,6 +89,9 @@ struct Probe {
 struct Stream {
     index: usize,
     codec_type: Option<String>,
+    codec_name: Option<String>,
+    #[serde(default)]
+    tags: HashMap<String, String>,
     width: Option<u32>,
     height: Option<u32>,
     duration: Option<String>,
@@ -86,6 +134,35 @@ fn rotation(stream: &Stream) -> i32 {
     0
 }
 
+fn embedded_subtitles(streams: &[Stream]) -> Vec<SubtitleTrack> {
+    let mut subtitles = Vec::new();
+    for stream in streams
+        .iter()
+        .filter(|s| s.codec_type.as_deref() == Some("subtitle"))
+    {
+        let language = tag(&stream.tags, "language").unwrap_or("Unknown");
+        let title = tag(&stream.tags, "title").unwrap_or("");
+        subtitles.push(SubtitleTrack {
+            source: SubtitleSource::Embedded {
+                index: stream.index,
+                ordinal: subtitles.len(),
+            },
+            label: format!(
+                "{} · {} {} (track {})",
+                language,
+                stream
+                    .codec_name
+                    .as_deref()
+                    .unwrap_or("subtitle")
+                    .to_uppercase(),
+                title,
+                stream.index + 1
+            ),
+        });
+    }
+    subtitles
+}
+
 pub fn probe(path: &Path) -> Result<MediaInfo, String> {
     let output = crate::backends::background_command("ffprobe")
         .args([
@@ -121,6 +198,10 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         .streams
         .iter()
         .find(|s| s.codec_type.as_deref() == Some("audio"));
+    let mut subtitles = embedded_subtitles(&probe.streams);
+    if video.is_some() {
+        subtitles.extend(external_subtitles(path));
+    }
 
     if video.is_none() && audio.is_none() {
         return Err("no playable audio or video stream".to_string());
@@ -172,6 +253,7 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         has_audio: audio.is_some(),
         video_stream: video.map(|s| s.index),
         audio_stream: audio.map(|s| s.index),
+        subtitles,
         attached_picture: picture.is_some(),
         width,
         height,
@@ -181,6 +263,57 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_tracks_preserve_stream_index_and_subtitle_ordinal() {
+        let probe: Probe = serde_json::from_str(r#"{"streams":[
+            {"index":0,"codec_type":"video"},
+            {"index":2,"codec_type":"subtitle","codec_name":"ass","tags":{"language":"spa"}},
+            {"index":3,"codec_type":"audio"},
+            {"index":5,"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"eng","title":"SDH"}}
+        ]}"#).unwrap();
+        let subtitles = embedded_subtitles(&probe.streams);
+        assert_eq!(subtitles.len(), 2);
+        assert_eq!(
+            subtitles[0].source,
+            SubtitleSource::Embedded {
+                index: 2,
+                ordinal: 0
+            }
+        );
+        assert_eq!(
+            subtitles[1].source,
+            SubtitleSource::Embedded {
+                index: 5,
+                ordinal: 1
+            }
+        );
+        assert!(subtitles[1].label.contains("SDH"));
+    }
+
+    #[test]
+    fn finds_same_name_external_subtitles() {
+        let dir = std::env::temp_dir().join(format!(
+            "dplayer-subtitles-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let video = dir.join("episode.mkv");
+        let ass = dir.join("episode.ASS");
+        let other = dir.join("unrelated.srt");
+        std::fs::write(&ass, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        let tracks = external_subtitles(&video);
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].source, SubtitleSource::External(ass.clone()));
+        std::fs::remove_file(ass).unwrap();
+        std::fs::remove_file(other).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 
     #[test]
     fn output_is_bounded_for_large_portrait_and_landscape_videos() {
@@ -194,6 +327,7 @@ mod tests {
             has_audio: false,
             video_stream: Some(0),
             audio_stream: None,
+            subtitles: vec![],
             attached_picture: false,
             width: 3840,
             height: 2160,

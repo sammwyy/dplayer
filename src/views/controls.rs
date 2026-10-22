@@ -32,10 +32,7 @@ fn seekbar(p: &PlayerState) -> BoxedWidget {
                 },
                 ..row(0.0)
             })
-            .background(Color {
-                a: 46,
-                ..t.colors.text_primary
-            })
+            .background(t.colors.surface_hover)
             .corner_radius(2.5)
             .child(Box::new(
                 RawView::new(Style {
@@ -63,14 +60,7 @@ fn seekbar(p: &PlayerState) -> BoxedWidget {
                         ..row(0.0)
                     })
                     .background(t.colors.text_primary)
-                    .corner_radius(6.5)
-                    .box_shadow(creamui_core::BoxShadow::new(
-                        0.0,
-                        1.0,
-                        6.0,
-                        0.0,
-                        Color::rgba(0, 0, 0, 140),
-                    )),
+                    .corner_radius(6.5),
                 )),
             )),
         )],
@@ -224,12 +214,6 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
         let p2 = p.clone();
         icon_button(p, "open", false, move || p2.open_dialog())
     };
-    let queue = {
-        let p2 = p.clone();
-        icon_button(p, "queue", p.queue_open.get(), move || {
-            p2.queue_open.set(!p2.queue_open.get())
-        })
-    };
     let speed = {
         let p2 = p.clone();
         let speed = p.speed.get();
@@ -275,10 +259,7 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
                     ..row(0.0)
                 },
                 p.volume.get(),
-                Color {
-                    a: 46,
-                    ..t.colors.text_primary
-                },
+                t.colors.surface_hover,
                 t.colors.accent,
                 t.colors.text_primary,
                 move |v| p2.set_volume(v),
@@ -300,9 +281,9 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
         )
     };
     let (leading, trailing) = if compact {
-        (vec![queue], vec![mute])
+        (vec![], vec![mute])
     } else {
-        (vec![open, queue], vec![speed, mute, volume])
+        (vec![open], vec![speed, mute, volume])
     };
     let transport = view(
         row(4.0),
@@ -320,16 +301,11 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     );
 
     let elevated = t.colors.surface_elevated;
-    let (background, border) = match config.appearance.bar_style {
-        crate::config::BarStyle::Floating => (
-            Color { a: 214, ..elevated },
-            Color {
-                a: 40,
-                ..t.colors.text_primary
-            },
-        ),
-        crate::config::BarStyle::Solid => (elevated, t.colors.border),
+    let background = match config.appearance.bar_style {
+        crate::config::BarStyle::Floating => elevated,
+        crate::config::BarStyle::Solid => t.colors.surface,
     };
+    let border = t.colors.border;
     let bar = RawButton::new(
         Style {
             size: creamui_core::layout::Size {
@@ -354,13 +330,6 @@ pub fn build(p: &PlayerState, reveal: f32, window_width: f32) -> BoxedWidget {
     .background(background)
     .corner_radius(16.0)
     .border(border, 1.0)
-    .box_shadow(creamui_core::BoxShadow::new(
-        0.0,
-        12.0,
-        32.0,
-        -12.0,
-        Color::rgba(0, 0, 0, 150),
-    ))
     .with_children(vec![seek_row, transport]);
 
     view(

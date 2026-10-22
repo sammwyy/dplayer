@@ -9,7 +9,7 @@ use crate::engine::AvailableBackends;
 use crate::icons::Icons;
 use creamui_core::{
     layout::{AlignItems, Dimension, FlexWrap, JustifyContent, LengthPercentage, Style},
-    BoxShadow, BoxedWidget, LinearGradient, Size, StateStyle, Styled,
+    BoxedWidget, LinearGradient, Size, StateStyle, Styled,
 };
 use creamui_reactive::Signal;
 use creamui_render::{AppHandle, WindowHandle};
@@ -155,6 +155,9 @@ pub(crate) fn build(state: &State, size: Size) -> BoxedWidget {
         )
         .scrollbar_width(5.0)
         .scrollbar_margin(4.0)
+        .scrollbar_color(theme.colors.border_strong)
+        .scrollbar_hover_color(theme.colors.text_disabled)
+        .scrollbar_pressed_color(theme.colors.text_secondary)
         .child(view(document, document_children));
         let mut children = vec![
             titlebar(state, page, size.width),
@@ -642,7 +645,7 @@ fn appearance(state: &State) -> BoxedWidget {
                     state,
                     "panel",
                     "Playback bar",
-                    "Translucent over the picture, or opaque.",
+                    "Raised or flat, both fully opaque.",
                     bar,
                 )],
             ),
@@ -773,15 +776,8 @@ fn preview(state: &State) -> BoxedWidget {
             accent.mix(Color::rgb(0, 0, 0), 0.45),
         ))
         .corner_radius(radius)
-        .box_shadow(BoxShadow::new(
-            0.0,
-            8.0,
-            22.0,
-            -6.0,
-            Color::rgba(0, 0, 0, 160),
-        ))
         .child(Box::new(
-            Icon::new(state.icons.get("music"), Color::rgba(255, 255, 255, 220)).size(30.0),
+            Icon::new(state.icons.get("music"), Color::rgb(255, 255, 255)).size(30.0),
         )),
     ) as BoxedWidget;
     let info = view(
@@ -799,7 +795,7 @@ fn preview(state: &State) -> BoxedWidget {
             Box::new(
                 Text::new("Album - Artist")
                     .font_size(11.0)
-                    .color(Color::rgba(255, 255, 255, 170)),
+                    .color(Color::rgb(185, 185, 185)),
             ),
         ],
     );
@@ -809,11 +805,8 @@ fn preview(state: &State) -> BoxedWidget {
         ControlsWidth::Wide => 0.92,
     };
     let bar_bg = match appearance.bar_style {
-        BarStyle::Floating => {
-            let c = theme.colors.surface_elevated;
-            Color::rgba(c.r, c.g, c.b, 200)
-        }
-        BarStyle::Solid => theme.colors.surface_elevated,
+        BarStyle::Floating => theme.colors.surface_elevated,
+        BarStyle::Solid => theme.colors.surface,
     };
     let bar = Box::new(
         RawView::new(Style {

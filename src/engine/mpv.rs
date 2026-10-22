@@ -1,4 +1,5 @@
 use super::decode::{EngineEvent, VideoFrame};
+use super::probe::SubtitleSource;
 use libloading::Library;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::Path;
@@ -141,6 +142,7 @@ enum Control {
     Seek(f64),
     Speed(f32),
     Volume(f32),
+    Subtitle(Option<SubtitleSource>),
 }
 
 pub(super) struct MpvPlayback {
@@ -160,6 +162,7 @@ impl MpvSession {
         path: &Path,
         dimensions: (u32, u32),
         playback: MpvPlayback,
+        subtitle: Option<SubtitleSource>,
         events: Sender<EngineEvent>,
         video: SyncSender<(u64, VideoFrame)>,
         generation: u64,
@@ -188,7 +191,7 @@ impl MpvSession {
             let loaded = worker.load();
             let _ = ready_tx.send(loaded);
             if loaded {
-                worker.run(rx, clock, events, video, generation, playback.pos);
+                worker.run(rx, clock, events, video, generation, playback.pos, subtitle);
             }
         });
         ready_rx.recv().ok().filter(|ready| *ready)?;
@@ -214,6 +217,10 @@ impl MpvSession {
 
     pub fn volume(&self, volume: f32) {
         let _ = self.controls.send(Control::Volume(volume));
+    }
+
+    pub fn subtitle(&self, subtitle: Option<SubtitleSource>) {
+        let _ = self.controls.send(Control::Subtitle(subtitle));
     }
 }
 
@@ -247,6 +254,8 @@ impl Worker {
         if keep_open < 0 {
             return Err(worker.api.error(keep_open));
         }
+        let _ = unsafe { (worker.api.set_option)(handle, c"sid".as_ptr(), c"no".as_ptr()) };
+        let _ = unsafe { (worker.api.set_option)(handle, c"sub-auto".as_ptr(), c"no".as_ptr()) };
         if dimensions.0 == 0 {
             let _ = unsafe { (worker.api.set_option)(handle, c"vid".as_ptr(), c"no".as_ptr()) };
         }
@@ -308,6 +317,78 @@ impl Worker {
         self.set_double(b"time-pos\0", pos);
     }
 
+    fn command(&self, args: &[&CStr]) {
+        let mut pointers: Vec<_> = args.iter().map(|arg| arg.as_ptr()).collect();
+        pointers.push(ptr::null());
+        unsafe {
+            (self.api.command)(self.handle, 0, pointers.as_ptr());
+        }
+    }
+
+    fn select_subtitle(&self, subtitle: Option<&SubtitleSource>) {
+        match subtitle {
+            None => self.command(&[c"set", c"sid", c"no"]),
+            Some(SubtitleSource::External(path)) => {
+                #[cfg(unix)]
+                let file = {
+                    use std::os::unix::ffi::OsStrExt;
+                    CString::new(path.as_os_str().as_bytes()).ok()
+                };
+                #[cfg(not(unix))]
+                let file = CString::new(path.to_string_lossy().as_bytes()).ok();
+                if let Some(file) = file {
+                    self.command(&[c"sub-add", &file, c"select"]);
+                }
+            }
+            Some(SubtitleSource::Embedded { index, .. }) => {
+                let mut count = 0i64;
+                if unsafe {
+                    (self.api.get_property)(
+                        self.handle,
+                        c"track-list/count".as_ptr(),
+                        4,
+                        (&mut count as *mut i64).cast(),
+                    )
+                } < 0
+                {
+                    return;
+                }
+                for n in 0..count {
+                    let name = CString::new(format!("track-list/{n}/ff-index")).unwrap();
+                    let mut ff_index = -1i64;
+                    if unsafe {
+                        (self.api.get_property)(
+                            self.handle,
+                            name.as_ptr(),
+                            4,
+                            (&mut ff_index as *mut i64).cast(),
+                        )
+                    } < 0
+                        || ff_index != *index as i64
+                    {
+                        continue;
+                    }
+                    let name = CString::new(format!("track-list/{n}/id")).unwrap();
+                    let mut id = 0i64;
+                    if unsafe {
+                        (self.api.get_property)(
+                            self.handle,
+                            name.as_ptr(),
+                            4,
+                            (&mut id as *mut i64).cast(),
+                        )
+                    } >= 0
+                    {
+                        let id = CString::new(id.to_string()).unwrap();
+                        self.command(&[c"set", c"sid", &id]);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
         rx: Receiver<Control>,
@@ -316,6 +397,7 @@ impl Worker {
         video: SyncSender<(u64, VideoFrame)>,
         generation: u64,
         start_pos: f64,
+        mut subtitle: Option<SubtitleSource>,
     ) {
         let mut ticks = 0u32;
         let mut waiting_for_seek = start_pos > 0.0;
@@ -326,13 +408,15 @@ impl Worker {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
             };
-            let (mut pause, mut seek, mut speed, mut volume) = (None, None, None, None);
+            let (mut pause, mut seek, mut speed, mut volume, mut selected) =
+                (None, None, None, None, None);
             for command in first.into_iter().chain(rx.try_iter().take(128)) {
                 match command {
                     Control::Pause(value) => pause = Some(value),
                     Control::Seek(value) => seek = Some(value),
                     Control::Speed(value) => speed = Some(value),
                     Control::Volume(value) => volume = Some(value),
+                    Control::Subtitle(value) => selected = Some(value),
                 }
             }
             if let Some(value) = speed {
@@ -349,6 +433,10 @@ impl Worker {
                 waiting_for_seek = true;
                 ended = false;
             }
+            if let Some(value) = selected {
+                subtitle = value;
+                self.select_subtitle(subtitle.as_ref());
+            }
             loop {
                 let event = unsafe { (self.api.wait_event)(self.handle, 0.0) };
                 if event.is_null() {
@@ -360,6 +448,9 @@ impl Worker {
                 }
                 if event.kind == 8 && start_pos > 0.0 {
                     self.seek(start_pos);
+                }
+                if event.kind == 8 {
+                    self.select_subtitle(subtitle.as_ref());
                 }
                 if event.kind == 21 {
                     waiting_for_seek = false;
@@ -492,11 +583,22 @@ mod tests {
         session.speed(1.5);
         session.pause(true);
         session.volume(0.4);
+        session.subtitle(Some(SubtitleSource::Embedded {
+            index: 5,
+            ordinal: 1,
+        }));
         assert_eq!(session.position(), 12.5);
         assert!(matches!(rx.recv().unwrap(), Control::Seek(12.5)));
         assert!(matches!(rx.recv().unwrap(), Control::Speed(1.5)));
         assert!(matches!(rx.recv().unwrap(), Control::Pause(true)));
         assert!(matches!(rx.recv().unwrap(), Control::Volume(v) if (v - 0.4).abs() < 0.001));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            Control::Subtitle(Some(SubtitleSource::Embedded {
+                index: 5,
+                ordinal: 1
+            }))
+        ));
     }
 
     #[test]
@@ -516,6 +618,7 @@ mod tests {
                 paused: false,
                 volume: 0.0,
             },
+            None,
             events,
             video,
             1,

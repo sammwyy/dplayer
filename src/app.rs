@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::state::PlayerState;
 use creamui_render::platform::Key;
-use creamui_render::{AppBuilder, AppHandle, BlurRegion, WindowHandle, WindowOptions};
+use creamui_render::{AppBuilder, AppHandle, WindowHandle, WindowOptions};
 use creamui_theme::{Color, Theme};
 use creamui_theme_watch::ThemeListener;
 use std::cell::RefCell;
@@ -15,9 +15,9 @@ pub fn run(paths: Vec<PathBuf>) {
         title: "Media Player".into(),
         width: 960,
         height: 640,
-        transparent: true,
+        transparent: false,
         decorations: true,
-        blur: Some(BlurRegion::Window),
+        blur: None,
         backend: Config::load().interface.renderer.backend(),
         theme: load_theme(),
         ..Default::default()
@@ -33,7 +33,7 @@ pub fn run(paths: Vec<PathBuf>) {
             state.enqueue(paths.clone());
             app.append_window(
                 options.clone(),
-                Color::rgba(0, 0, 0, 0),
+                Color::rgb(0, 0, 0),
                 move |handle| {
                     let activity = keys.clone();
                     handle.on_pointer_moved(move |p| activity.poke_pointer((p.x, p.y)));
@@ -74,9 +74,9 @@ pub fn show_settings() {
         title: "Media Player Settings".into(),
         width: 780,
         height: 600,
-        transparent: true,
+        transparent: false,
         decorations: true,
-        blur: Some(BlurRegion::Window),
+        blur: None,
         backend: Config::load().interface.renderer.backend(),
         theme: load_theme(),
         ..Default::default()
@@ -88,7 +88,7 @@ pub fn show_settings() {
             settings.detect_backends(app.clone());
             app.append_window(
                 options,
-                Color::rgba(0, 0, 0, 0),
+                Color::rgb(0, 0, 0),
                 move |handle| {
                     let closer = handle.clone();
                     handle.on_keyboard_input(move |event, _| {
@@ -128,10 +128,38 @@ pub(crate) fn load_theme() -> Theme {
 
 /// Like [`load_theme`], with `media` as the automatic accent.
 pub(crate) fn theme_for(media: Option<Color>) -> Theme {
-    Config::load()
+    let mut theme = Config::load()
         .appearance
         .accent
-        .apply(load_system_theme(), media)
+        .apply(load_system_theme(), media);
+    let colors = &mut theme.colors;
+    colors.surface.a = 255;
+    let surface = colors.surface;
+    for color in [
+        &mut colors.surface_elevated,
+        &mut colors.surface_hover,
+        &mut colors.accent,
+        &mut colors.accent_hover,
+        &mut colors.accent_pressed,
+        &mut colors.selection_background,
+        &mut colors.selection_text,
+        &mut colors.text_primary,
+        &mut colors.text_secondary,
+        &mut colors.text_disabled,
+        &mut colors.border,
+        &mut colors.border_strong,
+        &mut colors.danger,
+        &mut colors.warning,
+        &mut colors.success,
+    ] {
+        let a = color.a as f32 / 255.0;
+        *color = Color::rgb(
+            (color.r as f32 * a + surface.r as f32 * (1.0 - a)).round() as u8,
+            (color.g as f32 * a + surface.g as f32 * (1.0 - a)).round() as u8,
+            (color.b as f32 * a + surface.b as f32 * (1.0 - a)).round() as u8,
+        );
+    }
+    theme
 }
 
 pub(crate) fn load_system_theme() -> Theme {

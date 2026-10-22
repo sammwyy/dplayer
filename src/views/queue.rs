@@ -58,28 +58,19 @@ fn row_item(p: &PlayerState, index: usize) -> Option<RawButton> {
                             ..column(1.0)
                         },
                         vec![
-                            Box::new(
-                                Text::new(name)
-                                    .font_size(12.5)
-                                    .color(if active {
-                                        t.colors.accent
-                                    } else {
-                                        t.colors.text_primary
-                                    }),
-                            ) as BoxedWidget,
+                            Box::new(Text::new(name).font_size(12.5).color(if active {
+                                t.colors.accent
+                            } else {
+                                t.colors.text_primary
+                            })) as BoxedWidget,
                             label(crate::cli::kind_label(&item.path), 10.0, true),
                         ],
                     ),
                 ],
             ),
-            icon_button_sized(
-                p,
-                "close",
-                24.0,
-                13.0,
-                false,
-                move || remove.remove_at(index),
-            ),
+            icon_button_sized(p, "close", 24.0, 13.0, false, move || {
+                remove.remove_at(index)
+            }),
         ]),
     )
 }
@@ -116,18 +107,18 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
     Box::new(
         RawButton::new(
             Style {
-            position: creamui_core::layout::Position::Absolute,
-            inset: creamui_core::layout::Rect {
-                top: LengthPercentageAuto::Length(12.0),
-                right: LengthPercentageAuto::Length(12.0),
-                bottom: LengthPercentageAuto::Length(bottom),
-                left: LengthPercentageAuto::Auto,
-            },
-            size: creamui_core::layout::Size {
-                width: Dimension::Length(300.0),
-                height: Dimension::Auto,
-            },
-            ..column(0.0)
+                position: creamui_core::layout::Position::Absolute,
+                inset: creamui_core::layout::Rect {
+                    top: LengthPercentageAuto::Length(crate::views::chrome::HEIGHT + 8.0),
+                    right: LengthPercentageAuto::Length(12.0),
+                    bottom: LengthPercentageAuto::Length(bottom),
+                    left: LengthPercentageAuto::Auto,
+                },
+                size: creamui_core::layout::Size {
+                    width: Dimension::Length(300.0),
+                    height: Dimension::Auto,
+                },
+                ..column(0.0)
             },
             || {},
         )
@@ -156,9 +147,7 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
                         13.0,
                         false,
                     ),
-                    icon_button_sized(p, "plus", 26.0, 15.0, false, move || {
-                        add.open_dialog()
-                    }),
+                    icon_button_sized(p, "plus", 26.0, 15.0, false, move || add.open_dialog()),
                 ],
             ),
             Box::new(
@@ -176,6 +165,9 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
                     },
                     p.queue_scroll.clone(),
                 )
+                .scrollbar_color(t.colors.border_strong)
+                .scrollbar_hover_color(t.colors.text_disabled)
+                .scrollbar_pressed_color(t.colors.text_secondary)
                 .child(view(column(2.0), rows)),
             ),
         ]),

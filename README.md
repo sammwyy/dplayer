@@ -12,9 +12,12 @@ A native video and music player for Linux, built on
   previous / next, shuffle, repeat (off → all → one), playback speed
   (0.5×–2×), volume slider and mute.
 - Queue panel with add / remove / click-to-play.
+- Subtitle selector in video mode: off, embedded tracks (including multiple
+  languages), and same-name `.ass`, `.ssa`, `.srt` or `.vtt` files beside the video.
 - Music view with the embedded cover art, title and "Album - Artist" over a
   blurred backdrop of the artwork.
-- Titlebar built on CreamUI's `AppTitlebar`: settings button, the video title
+- Titlebar built on CreamUI's `AppTitlebar`: settings and queue buttons (plus
+  subtitles in video mode), the video title
   in the center, and window controls drawn by the compositor (hybrid) or by
   the app as a fallback. Everything mirrors when the controls sit on the left.
 - Automatic accent color taken from the cover art or the video picture.
@@ -23,7 +26,7 @@ A native video and music player for Linux, built on
   lock screen, hardware keys). Title, artist, album, cover art and timeline
   are published; play/pause, stop, next/previous, seeking, volume, rate,
   shuffle and repeat can be driven from outside.
-- Translucent blurred window and live system-theme reload.
+- Opaque windows and controls with live system-theme reload.
 - Keyboard-first: `space` play/pause · `←` `→` seek 5 s (`shift` = 30 s) ·
   `↑` `↓` volume · `f` maximize · `m` mute · `[` `]` speed ·
   `n`/`p` next/previous · `l` repeat · `s` shuffle · `t` queue ·

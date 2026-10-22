@@ -1,6 +1,7 @@
 //! Subprocess decoder running `ffmpeg` with two raw output streams: RGBA8 video
 //! frames and interleaved `f32le` stereo PCM, paced at the input clock via `-readrate`.
 
+use super::probe::SubtitleSource;
 use crate::backends::{self, ProcessControl, SpawnedDecoder};
 use std::io::Read;
 use std::sync::mpsc::{sync_channel, Receiver, Sender, SyncSender};
@@ -46,6 +47,7 @@ pub struct DecodeSession {
     _waiter: thread::JoinHandle<()>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ffmpeg_args(
     path: &std::path::Path,
     pos: f64,
@@ -56,6 +58,7 @@ fn ffmpeg_args(
     out_h: u32,
     video_dest: Option<&str>,
     audio_dest: Option<&str>,
+    subtitle: Option<&SubtitleSource>,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-hide_banner".into(),
@@ -76,6 +79,36 @@ fn ffmpeg_args(
     ]);
     args.extend(["-i".into(), path.to_string_lossy().into_owned()]);
     if let (Some(index), Some(video_dest)) = (video_stream, video_dest) {
+        let mut filters = format!(
+            "fps={:.4},scale={out_w}:{out_h},setsar=1",
+            30.0 / speed.max(1.0)
+        );
+        if let Some(subtitle) = subtitle {
+            let (file, ordinal) = match subtitle {
+                SubtitleSource::Embedded { ordinal, .. } => (path, Some(*ordinal)),
+                SubtitleSource::External(file) => (file.as_path(), None),
+            };
+            let escape = |text: &str, chars: &str| {
+                text.chars().fold(String::new(), |mut result, ch| {
+                    if chars.contains(ch) {
+                        result.push('\\');
+                    }
+                    result.push(ch);
+                    result
+                })
+            };
+            let filename = escape(&escape(&file.to_string_lossy(), "\\':"), "\\'[],;");
+            if pos > 0.05 {
+                filters.push_str(&format!(",setpts=PTS+{pos:.3}/TB"));
+            }
+            filters.push_str(&format!(",subtitles=filename={filename}"));
+            if let Some(ordinal) = ordinal {
+                filters.push_str(&format!(":si={ordinal}"));
+            }
+            if pos > 0.05 {
+                filters.push_str(&format!(",setpts=PTS-{pos:.3}/TB"));
+            }
+        }
         args.extend([
             "-map".into(),
             format!("0:{index}"),
@@ -83,10 +116,7 @@ fn ffmpeg_args(
             "-sn".into(),
             "-dn".into(),
             "-vf".into(),
-            format!(
-                "fps={:.4},scale={out_w}:{out_h},setsar=1",
-                30.0 / speed.max(1.0)
-            ),
+            filters,
             "-f".into(),
             "rawvideo".into(),
             "-pix_fmt".into(),
@@ -131,6 +161,7 @@ impl DecodeSession {
         audio_stream: Option<usize>,
         out_w: u32,
         out_h: u32,
+        subtitle: Option<&SubtitleSource>,
         events_tx: Sender<EngineEvent>,
         video_tx: SyncSender<(u64, VideoFrame)>,
         generation: u64,
@@ -154,6 +185,7 @@ impl DecodeSession {
                     out_h,
                     video_stream.map(|_| video_dest),
                     audio_stream.map(|_| audio_dest),
+                    subtitle,
                 )
             },
         )?;
@@ -269,6 +301,7 @@ mod tests {
             720,
             Some("pipe:3"),
             Some("pipe:4"),
+            None,
         );
         let maps: Vec<_> = args
             .windows(2)
@@ -286,9 +319,37 @@ mod tests {
             720,
             Some("pipe:3"),
             Some("pipe:4"),
+            None,
         );
         assert!(fast
             .windows(2)
             .any(|pair| pair[0] == "-vf" && pair[1].starts_with("fps=15.0000,scale=")));
+    }
+
+    #[test]
+    fn subtitles_filter_selects_embedded_stream_or_external_ass() {
+        let path = std::path::Path::new("movie.mkv");
+        let filter = |subtitle: &SubtitleSource| {
+            let args = ffmpeg_args(
+                path,
+                0.0,
+                1.0,
+                Some(0),
+                None,
+                320,
+                180,
+                Some("pipe:3"),
+                None,
+                Some(subtitle),
+            );
+            args.windows(2).find(|pair| pair[0] == "-vf").unwrap()[1].clone()
+        };
+        assert!(filter(&SubtitleSource::Embedded {
+            index: 4,
+            ordinal: 1
+        })
+        .ends_with("subtitles=filename=movie.mkv:si=1"));
+        assert!(filter(&SubtitleSource::External("movie.ass".into()))
+            .ends_with("subtitles=filename=movie.ass"));
     }
 }

@@ -8,6 +8,7 @@ pub use audio::{AudioClock, AudioOutput};
 pub use decode::{DecodeSession, EngineEvent, VideoFrame};
 use mpv::{MpvPlayback, MpvSession};
 pub use probe::MediaInfo;
+pub use probe::SubtitleSource;
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -92,6 +93,7 @@ pub fn cover_art(path: &std::path::Path) -> Option<Vec<u8>> {
 struct Inner {
     session: Option<PlaybackSession>,
     backend: PlaybackBackend,
+    subtitle: Option<SubtitleSource>,
     clock: AudioClock,
     /// Media timestamp (in seconds) at which the current decode session started.
     base: f64,
@@ -122,6 +124,7 @@ enum PlaybackSession {
 pub struct RestartRequest {
     info: MediaInfo,
     backend: PlaybackBackend,
+    subtitle: Option<SubtitleSource>,
     pos: f64,
     speed: f32,
     generation: u64,
@@ -166,6 +169,7 @@ impl RestartRequest {
                     paused: self.paused,
                     volume: self.volume,
                 },
+                self.subtitle.clone(),
                 self.events_tx.clone(),
                 self.video_tx.clone(),
                 self.generation,
@@ -188,6 +192,7 @@ impl RestartRequest {
                 self.info.audio_stream.filter(|_| self.audio),
                 out_w,
                 out_h,
+                self.subtitle.as_ref(),
                 self.events_tx.clone(),
                 self.video_tx.clone(),
                 self.generation,
@@ -241,6 +246,7 @@ impl Engine {
             inner: Mutex::new(Inner {
                 session: None,
                 backend: PlaybackBackend::Auto,
+                subtitle: None,
                 clock: AudioClock::default(),
                 base: 0.0,
                 speed: 1.0,
@@ -278,6 +284,7 @@ impl Engine {
         }
         RestartRequest {
             backend: inner.backend,
+            subtitle: inner.subtitle.clone(),
             audio: info.has_audio && self.audio.is_some(),
             paused: inner.paused,
             volume: inner.volume,
@@ -357,6 +364,7 @@ impl Engine {
         inner.generation += 1;
         self.latest.store(inner.generation, Ordering::Release);
         inner.session = None;
+        inner.subtitle = None;
         inner.exited = false;
         if let Some(player) = &self.audio {
             player.player.stop();
@@ -459,6 +467,17 @@ impl Engine {
 
     pub fn set_backend(&self, backend: PlaybackBackend) {
         self.inner.lock().unwrap().backend = backend;
+    }
+
+    pub fn set_subtitle(&self, subtitle: Option<SubtitleSource>) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        inner.subtitle = subtitle.clone();
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            session.subtitle(subtitle);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn seek_live(&self, pos: f64) -> bool {
@@ -565,11 +584,13 @@ mod tests {
                 has_audio: true,
                 video_stream: None,
                 audio_stream: Some(0),
+                subtitles: vec![],
                 attached_picture: false,
                 width: 0,
                 height: 0,
             },
             backend: PlaybackBackend::Auto,
+            subtitle: None,
             pos: 0.0,
             speed: 1.0,
             volume: 1.0,

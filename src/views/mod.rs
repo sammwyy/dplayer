@@ -2,6 +2,7 @@ pub(crate) mod chrome;
 pub mod controls;
 pub mod queue;
 pub mod stage;
+pub mod subtitles;
 
 use crate::components::*;
 use crate::state::{PlayerState, Status};
@@ -24,6 +25,9 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
         }
         if p.queue_open.get() {
             children.push(queue::build(p));
+        }
+        if p.subtitles_open.get() && p.media.get().as_ref().is_some_and(|m| m.has_video) {
+            children.push(subtitles::build(p, size));
         }
         view(
             Style {

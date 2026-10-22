@@ -1,11 +1,11 @@
 use crate::components::*;
-use crate::state::{PlayerState, Status};
-use creamui_image::Image;
-use creamui_core::runtime::ImageFit;
-use creamui_widgets::RawSpinner;
 use crate::config::{AudioBackground, CoverShape};
+use crate::state::{PlayerState, Status};
 use crate::views::chrome;
+use creamui_core::runtime::ImageFit;
 use creamui_core::Size;
+use creamui_image::Image;
+use creamui_widgets::RawSpinner;
 
 fn click_catch(p: &PlayerState, child: BoxedWidget) -> BoxedWidget {
     let p = p.clone();
@@ -100,14 +100,6 @@ fn pill_button(
     .focus_style(StateStyle::new().outline(t.colors.accent, 2.0));
     if !primary {
         button = button.border(t.colors.border, 1.0);
-    } else {
-        button = button.box_shadow(creamui_core::BoxShadow::new(
-            0.0,
-            8.0,
-            20.0,
-            -8.0,
-            t.colors.accent.mix(CLEAR, 0.4),
-        ));
     }
     Box::new(button.with_children(vec![
         glyph(p, icon, 16.0, foreground),
@@ -129,14 +121,7 @@ fn welcome(p: &PlayerState) -> BoxedWidget {
             t.colors.accent.mix(Color::rgb(0, 0, 0), 0.3),
         ))
         .corner_radius(30.0)
-        .border(Color::rgba(255, 255, 255, 40), 1.0)
-        .box_shadow(creamui_core::BoxShadow::new(
-            0.0,
-            18.0,
-            44.0,
-            -14.0,
-            t.colors.accent.mix(CLEAR, 0.35),
-        ))
+        .border(t.colors.border, 1.0)
         .child(glyph(p, "play", 46.0, Color::rgb(255, 255, 255))),
     ) as BoxedWidget;
     view(
@@ -152,7 +137,11 @@ fn welcome(p: &PlayerState) -> BoxedWidget {
             spacer(28.0),
             Box::new(Text::new("Nothing playing").font_size(26.0).bold(true)),
             spacer(8.0),
-            label("Open a video or a song, or drop files anywhere in this window.", 13.5, true),
+            label(
+                "Open a video or a song, or drop files anywhere in this window.",
+                13.5,
+                true,
+            ),
             spacer(26.0),
             view(
                 row(10.0),
@@ -209,9 +198,9 @@ fn error(p: &PlayerState, message: &str) -> BoxedWidget {
                 )
                 .background(t.colors.accent)
                 .corner_radius(9.0)
-                .hover_style(StateStyle::new().background(
-                    t.colors.accent.mix(t.colors.text_primary, 0.12),
-                ))
+                .hover_style(
+                    StateStyle::new().background(t.colors.accent.mix(t.colors.text_primary, 0.12)),
+                )
                 .child(Box::new(
                     Text::new("Open another file")
                         .font_size(12.5)
@@ -238,25 +227,18 @@ fn fill_layer(child: impl Styled + creamui_core::Widget + 'static) -> BoxedWidge
 fn audio_backdrop(p: &PlayerState, background: AudioBackground) -> Vec<BoxedWidget> {
     let t = use_theme();
     let gradient = || {
-        fill_layer(RawView::new(Style::default()).background(
-            creamui_core::LinearGradient::new(
+        fill_layer(
+            RawView::new(Style::default()).background(creamui_core::LinearGradient::new(
                 160.0,
                 t.colors.accent.mix(BLACK, 0.55),
                 Color::rgb(6, 6, 8),
-            ),
-        ))
+            )),
+        )
     };
     match (background, p.backdrop.get()) {
-        (AudioBackground::Blurred, Some(backdrop)) => vec![
-            fill_layer(Image::new(backdrop).fit(ImageFit::Cover)),
-            fill_layer(RawView::new(Style::default()).background(
-                creamui_core::LinearGradient::new(
-                    180.0,
-                    Color::rgba(0, 0, 0, 80),
-                    Color::rgba(0, 0, 0, 175),
-                ),
-            )),
-        ],
+        (AudioBackground::Blurred, Some(backdrop)) => {
+            vec![fill_layer(Image::new(backdrop).fit(ImageFit::Cover))]
+        }
         (AudioBackground::Black, _) => vec![],
         _ => vec![gradient()],
     }
@@ -283,13 +265,6 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
         Some(cover) => Box::new(
             RawView::new(fixed(side, side))
                 .corner_radius(radius)
-                .box_shadow(creamui_core::BoxShadow::new(
-                    0.0,
-                    24.0,
-                    60.0,
-                    -16.0,
-                    Color::rgba(0, 0, 0, 200),
-                ))
                 .child(Box::new(
                     Image::new(cover)
                         .fit(ImageFit::Cover)
@@ -308,14 +283,7 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
                 t.colors.accent.mix(BLACK, 0.5),
             ))
             .corner_radius(radius)
-            .box_shadow(creamui_core::BoxShadow::new(
-                0.0,
-                24.0,
-                60.0,
-                -16.0,
-                Color::rgba(0, 0, 0, 200),
-            ))
-            .child(glyph(p, "music", side * 0.4, Color::rgba(255, 255, 255, 210))),
+            .child(glyph(p, "music", side * 0.4, Color::rgb(255, 255, 255))),
         ),
     };
     let (title, subtitle) = match &media {
@@ -378,7 +346,7 @@ fn audio_stage(p: &PlayerState, size: Size) -> BoxedWidget {
             Box::new(
                 Text::new(subtitle)
                     .font_size(14.5)
-                    .color(Color::rgba(255, 255, 255, 165))
+                    .color(Color::rgb(185, 185, 185))
                     .text_align(align)
                     .layout(text_style),
             ),
@@ -457,15 +425,15 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
         Status::Playing => match &media {
             Some(media) if media.has_video => {
                 let image: BoxedWidget = match p.frame.get() {
-                    Some(frame) => Box::new(
-                        Image::new(frame).fit(ImageFit::Contain).layout(Style {
+                    Some(frame) => {
+                        Box::new(Image::new(frame).fit(ImageFit::Contain).layout(Style {
                             size: creamui_core::layout::Size {
                                 width: Dimension::Percent(1.0),
                                 height: Dimension::Percent(1.0),
                             },
                             ..Default::default()
-                        }),
-                    ),
+                        }))
+                    }
                     None => view(row(0.0), vec![]),
                 };
                 click_catch(p, image)

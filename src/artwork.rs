@@ -46,7 +46,13 @@ pub fn decode(bytes: &[u8]) -> Option<Artwork> {
     let image = ImageData::from_bytes(bytes).ok()?;
     let (width, height) = (image.width(), image.height());
     let pixels = image.pixels().to_vec();
-    let backdrop = blur(downscale(&pixels, width, height));
+    let mut backdrop = blur(downscale(&pixels, width, height));
+    for pixel in backdrop.2.chunks_exact_mut(4) {
+        for channel in &mut pixel[..3] {
+            *channel = (*channel as f32 * 0.42) as u8;
+        }
+        pixel[3] = 255;
+    }
     let accent = dominant_color(&pixels);
     Some(Artwork {
         width,
