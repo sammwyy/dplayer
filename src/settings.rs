@@ -2,7 +2,8 @@
 
 use crate::components::{column, fixed, pad, row, view};
 use crate::config::{
-    Accent, AudioBackground, BarStyle, Config, ControlsWidth, CoverShape, RepeatMode, TimeDisplay,
+    Accent, AudioBackground, BarStyle, Config, ControlsWidth, CoverShape, Renderer, RepeatMode,
+    TimeDisplay,
 };
 use crate::icons::Icons;
 use creamui_core::{
@@ -473,6 +474,12 @@ fn interface(state: &State) -> BoxedWidget {
         &["Duration", "Remaining"],
         |c, i| c.interface.time_display = [TimeDisplay::Total, TimeDisplay::Remaining][i],
     );
+    let renderer = segmented(
+        state,
+        interface.renderer as usize,
+        &["GPU", "CPU"],
+        |c, i| c.interface.renderer = [Renderer::Gpu, Renderer::Cpu][i],
+    );
     view(
         column(22.0),
         vec![
@@ -512,6 +519,16 @@ fn interface(state: &State) -> BoxedWidget {
                     "Time on the right",
                     "Show the total length or the time left.",
                     time,
+                )],
+            ),
+            section(
+                "Rendering",
+                vec![preference_row(
+                    state,
+                    "sliders",
+                    "Renderer",
+                    "How windows are drawn. Applies after restarting.",
+                    renderer,
                 )],
             ),
         ],

@@ -18,6 +18,7 @@ pub fn run(paths: Vec<PathBuf>) {
         transparent: true,
         decorations: true,
         blur: Some(BlurRegion::Window),
+        backend: Config::load().interface.renderer.backend(),
         theme: load_theme(),
         ..Default::default()
     };
@@ -76,6 +77,7 @@ pub fn show_settings() {
         transparent: true,
         decorations: true,
         blur: Some(BlurRegion::Window),
+        backend: Config::load().interface.renderer.backend(),
         theme: load_theme(),
         ..Default::default()
     };

@@ -38,6 +38,8 @@ pub struct InterfaceConfig {
     pub animations: bool,
     pub controls_width: ControlsWidth,
     pub time_display: TimeDisplay,
+    /// Which backend draws the windows. Applies to newly opened windows.
+    pub renderer: Renderer,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -83,6 +85,25 @@ pub enum TimeDisplay {
     #[default]
     Total,
     Remaining,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Renderer {
+    /// Draws with `wgpu`, falling back to CPU when no adapter is usable.
+    Gpu,
+    /// Software rasterizer; skips GPU init cost and memory.
+    #[default]
+    Cpu,
+}
+
+impl Renderer {
+    pub fn backend(self) -> creamui_render::RenderBackend {
+        match self {
+            Self::Gpu => creamui_render::RenderBackend::Gpu,
+            Self::Cpu => creamui_render::RenderBackend::Cpu,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -209,6 +230,7 @@ impl Default for InterfaceConfig {
             animations: true,
             controls_width: ControlsWidth::Default,
             time_display: TimeDisplay::Total,
+            renderer: Renderer::Cpu,
         }
     }
 }
