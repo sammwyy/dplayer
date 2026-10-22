@@ -11,13 +11,19 @@ A native video and music player for Linux, built on
   slides in and out over video: seek bar (click or drag), play/pause,
   previous / next, shuffle, repeat (off → all → one), playback speed
   (0.5×–2×), volume slider and mute.
-- Queue panel with add / remove / click-to-play.
+- Separate buttons below the transport for **Play now** (replace the queue)
+  and **Add next** (insert after the current track). The queue panel keeps its
+  add / remove / click-to-play controls.
 - Subtitle selector in video mode: off, embedded tracks (including multiple
   languages), and same-name `.ass`, `.ssa`, `.srt` or `.vtt` files beside the video.
+  Choose top/bottom placement, adjust outlines, or drag the on-screen handle
+  while the subtitle menu is open. libmpv applies placement live; FFmpeg
+  applies it when the drag ends. Position and outline reset for each new media file.
+- Audio track selector for files with multiple audio streams.
 - Music view with the embedded cover art, title and "Album - Artist" over a
   blurred backdrop of the artwork.
 - Titlebar built on CreamUI's `AppTitlebar`: settings and queue buttons (plus
-  subtitles in video mode), the video title
+  subtitles and audio tracks in video mode), the video title
   in the center, and window controls drawn by the compositor (hybrid) or by
   the app as a fallback. Everything mirrors when the controls sit on the left.
 - Automatic accent color taken from the cover art or the video picture.

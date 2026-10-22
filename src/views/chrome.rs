@@ -43,6 +43,7 @@ pub fn build(p: &PlayerState, reveal: f32, width: f32) -> BoxedWidget {
         action(p, dark, "settings", false, crate::app::open_settings),
         action(p, dark, "queue", p.queue_open.get(), move || {
             queue.subtitles_open.set(false);
+            queue.audio_open.set(false);
             queue.queue_open.set(!queue.queue_open.get());
         }),
     ];
@@ -55,9 +56,24 @@ pub fn build(p: &PlayerState, reveal: f32, width: f32) -> BoxedWidget {
             p.subtitles_open.get(),
             move || {
                 subtitles.queue_open.set(false);
+                subtitles.audio_open.set(false);
                 subtitles
                     .subtitles_open
                     .set(!subtitles.subtitles_open.get());
+            },
+        ));
+    }
+    if media.as_ref().is_some_and(|m| m.audio_tracks.len() > 1) {
+        let audio = p.clone();
+        actions.push(action(
+            p,
+            dark,
+            "audio-track",
+            p.audio_open.get(),
+            move || {
+                audio.queue_open.set(false);
+                audio.subtitles_open.set(false);
+                audio.audio_open.set(!audio.audio_open.get());
             },
         ));
     }

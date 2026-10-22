@@ -1,3 +1,4 @@
+pub mod audio;
 pub(crate) mod chrome;
 pub mod controls;
 pub mod queue;
@@ -15,6 +16,7 @@ fn ease(progress: f32) -> f32 {
 
 pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
     creamui_reactive::with_context_scope(|| {
+        p.set_view_size(size.width, size.height);
         let mut children = vec![stage::build(p, size)];
         let reveal = ease(p.chrome_progress.get());
         if reveal > 0.0 {
@@ -28,6 +30,12 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
         }
         if p.subtitles_open.get() && p.media.get().as_ref().is_some_and(|m| m.has_video) {
             children.push(subtitles::build(p, size));
+            if p.subtitle.get().is_some() {
+                children.push(subtitles::drag_handle(p, size));
+            }
+        }
+        if p.audio_open.get() {
+            children.push(audio::build(p, size));
         }
         view(
             Style {

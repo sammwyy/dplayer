@@ -41,6 +41,8 @@ pub fn run(paths: Vec<PathBuf>) {
                     handle.on_pointer_presence(move |inside| {
                         if inside {
                             presence.poke();
+                        } else {
+                            presence.finish_subtitle_drag();
                         }
                     });
                     let dropped = keys.clone();

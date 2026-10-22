@@ -9,6 +9,7 @@ pub use decode::{DecodeSession, EngineEvent, VideoFrame};
 use mpv::{MpvPlayback, MpvSession};
 pub use probe::MediaInfo;
 pub use probe::SubtitleSource;
+pub use probe::SubtitleStyle;
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -94,6 +95,7 @@ struct Inner {
     session: Option<PlaybackSession>,
     backend: PlaybackBackend,
     subtitle: Option<SubtitleSource>,
+    subtitle_style: SubtitleStyle,
     clock: AudioClock,
     /// Media timestamp (in seconds) at which the current decode session started.
     base: f64,
@@ -114,6 +116,7 @@ struct Inner {
     /// Monotonic counter incremented on each session spawn to discard events
     /// from superseded decode processes.
     generation: u64,
+    active_generation: u64,
 }
 
 enum PlaybackSession {
@@ -125,6 +128,7 @@ pub struct RestartRequest {
     info: MediaInfo,
     backend: PlaybackBackend,
     subtitle: Option<SubtitleSource>,
+    subtitle_style: SubtitleStyle,
     pos: f64,
     speed: f32,
     generation: u64,
@@ -170,6 +174,8 @@ impl RestartRequest {
                     volume: self.volume,
                 },
                 self.subtitle.clone(),
+                self.subtitle_style,
+                self.info.audio_stream,
                 self.events_tx.clone(),
                 self.video_tx.clone(),
                 self.generation,
@@ -193,6 +199,7 @@ impl RestartRequest {
                 out_w,
                 out_h,
                 self.subtitle.as_ref(),
+                self.subtitle_style,
                 self.events_tx.clone(),
                 self.video_tx.clone(),
                 self.generation,
@@ -247,6 +254,7 @@ impl Engine {
                 session: None,
                 backend: PlaybackBackend::Auto,
                 subtitle: None,
+                subtitle_style: SubtitleStyle::default(),
                 clock: AudioClock::default(),
                 base: 0.0,
                 speed: 1.0,
@@ -263,6 +271,7 @@ impl Engine {
                 exit_code: 0,
                 exit_tail: String::new(),
                 generation: 0,
+                active_generation: 0,
             }),
         }
     }
@@ -279,12 +288,10 @@ impl Engine {
         let mut inner = self.inner.lock().unwrap();
         inner.generation += 1;
         self.latest.store(inner.generation, Ordering::Release);
-        if let Ok(rx) = self.video_rx.try_lock() {
-            while rx.try_recv().is_ok() {}
-        }
         RestartRequest {
             backend: inner.backend,
             subtitle: inner.subtitle.clone(),
+            subtitle_style: inner.subtitle_style,
             audio: info.has_audio && self.audio.is_some(),
             paused: inner.paused,
             volume: inner.volume,
@@ -328,9 +335,7 @@ impl Engine {
                         inner.clock = AudioClock::default();
                     }
                 }
-                if paused {
-                    session.suspend();
-                }
+                session.activate(paused);
             }
             PlaybackSession::Mpv(session) => {
                 if let Some(player) = &self.audio {
@@ -343,6 +348,7 @@ impl Engine {
         }
 
         inner.session = Some(session);
+        inner.active_generation = generation;
         inner.base = pos;
         inner.speed = speed;
         inner.paused = paused;
@@ -362,9 +368,11 @@ impl Engine {
     pub fn stop(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.generation += 1;
+        inner.active_generation = inner.generation;
         self.latest.store(inner.generation, Ordering::Release);
         inner.session = None;
         inner.subtitle = None;
+        inner.subtitle_style = SubtitleStyle::default();
         inner.exited = false;
         if let Some(player) = &self.audio {
             player.player.stop();
@@ -373,6 +381,10 @@ impl Engine {
 
     pub fn generation(&self) -> u64 {
         self.inner.lock().unwrap().generation
+    }
+
+    pub fn video_generation(&self) -> u64 {
+        self.inner.lock().unwrap().active_generation
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -399,12 +411,10 @@ impl Engine {
                 }
             }
         }
-        if !inner.has_audio {
-            if paused {
-                inner.frozen += inner.resume.elapsed().as_secs_f64();
-            } else {
-                inner.resume = Instant::now();
-            }
+        if paused {
+            inner.frozen += inner.resume.elapsed().as_secs_f64();
+        } else {
+            inner.resume = Instant::now();
         }
     }
 
@@ -416,16 +426,22 @@ impl Engine {
         if let Some(PlaybackSession::Mpv(session)) = &inner.session {
             return session.position();
         }
+        let running = if inner.paused {
+            0.0
+        } else {
+            inner.resume.elapsed().as_secs_f64()
+        };
+        let wall = inner.frozen + running;
         let elapsed = if inner.has_audio {
             let samples = inner.clock.played.load(Ordering::Relaxed) as f64;
-            samples / (AUDIO_CHANNELS as f64 * AUDIO_RATE as f64)
-        } else {
-            let running = if inner.paused {
-                0.0
+            let audio = samples / (AUDIO_CHANNELS as f64 * AUDIO_RATE as f64);
+            if inner.has_video {
+                audio.max(wall)
             } else {
-                inner.resume.elapsed().as_secs_f64()
-            };
-            inner.frozen + running
+                audio
+            }
+        } else {
+            wall
         };
         inner.base + elapsed * inner.speed as f64
     }
@@ -474,6 +490,27 @@ impl Engine {
         inner.subtitle = subtitle.clone();
         if let Some(PlaybackSession::Mpv(session)) = &inner.session {
             session.subtitle(subtitle);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_subtitle_style(&self, style: SubtitleStyle) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        inner.subtitle_style = style;
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            session.subtitle_style(style);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_audio_live(&self, index: usize) -> bool {
+        let inner = self.inner.lock().unwrap();
+        if let Some(PlaybackSession::Mpv(session)) = &inner.session {
+            session.audio(index);
             true
         } else {
             false
@@ -584,6 +621,7 @@ mod tests {
                 has_audio: true,
                 video_stream: None,
                 audio_stream: Some(0),
+                audio_tracks: vec![],
                 subtitles: vec![],
                 attached_picture: false,
                 width: 0,
@@ -591,6 +629,7 @@ mod tests {
             },
             backend: PlaybackBackend::Auto,
             subtitle: None,
+            subtitle_style: SubtitleStyle::default(),
             pos: 0.0,
             speed: 1.0,
             volume: 1.0,
@@ -641,9 +680,10 @@ mod tests {
             return;
         };
         let engine = Engine::new();
+        engine.set_backend(PlaybackBackend::Ffmpeg);
         let info = probe::probe(std::path::Path::new(&path)).unwrap();
         let prepared = engine
-            .request_session(info, 0.0, 1.0)
+            .request_session(info.clone(), 0.0, 1.0)
             .spawn()
             .unwrap()
             .unwrap();
@@ -657,6 +697,23 @@ mod tests {
             .unwrap();
         assert_eq!(generation, engine.generation());
         assert_eq!((frame.width, frame.height), (320, 180));
+        engine.set_paused(true);
+        let paused = engine.position();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!((engine.position() - paused).abs() < 0.01);
+        engine.set_paused(false);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(engine.position() > paused + 0.1);
+        let active = engine.video_generation();
+        let prepared = engine
+            .request_session(info, engine.position(), 1.0)
+            .spawn()
+            .unwrap()
+            .unwrap();
+        assert_eq!(engine.video_generation(), active);
+        assert!(engine.activate(prepared, None));
+        assert_ne!(engine.video_generation(), active);
+        assert!(!engine.set_audio_live(1));
         assert!(!engine.seek_live(0.2));
         engine.stop();
     }

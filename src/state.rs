@@ -1,5 +1,5 @@
 use crate::config::{Accent, Config, RepeatMode};
-use crate::engine::{self, Engine, EngineEvent, MediaInfo, SubtitleSource};
+use crate::engine::{self, Engine, EngineEvent, MediaInfo, SubtitleSource, SubtitleStyle};
 use crate::icons::Icons;
 use creamui_image::ImageData;
 use creamui_reactive::Signal;
@@ -36,6 +36,11 @@ pub struct QueueItem {
     pub name: String,
 }
 
+fn insert_next(queue: &mut Vec<QueueItem>, current: Option<usize>, items: Vec<QueueItem>) {
+    let index = current.map_or(queue.len(), |index| (index + 1).min(queue.len()));
+    queue.splice(index..index, items);
+}
+
 pub const SPEEDS: &[f32] = &[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
 #[derive(Clone)]
@@ -61,7 +66,9 @@ pub struct PlayerState {
     pub shuffle: Signal<bool>,
     pub queue_open: Signal<bool>,
     pub subtitles_open: Signal<bool>,
+    pub audio_open: Signal<bool>,
     pub subtitle: Signal<Option<SubtitleSource>>,
+    pub subtitle_style: Signal<SubtitleStyle>,
     pub controls_visible: Signal<bool>,
     pub frame: Signal<Option<ImageData>>,
     pub cover: Signal<Option<ImageData>>,
@@ -77,6 +84,7 @@ pub struct PlayerState {
     pub(crate) media_session: Rc<RefCell<Option<crate::backends::MediaSession>>>,
     pub queue_scroll: ScrollController,
     pub subtitles_scroll: ScrollController,
+    pub audio_scroll: ScrollController,
     pub config: Signal<Config>,
     /// Chrome slide progress: 0.0 fully hidden, 1.0 fully shown.
     pub chrome_progress: Signal<f32>,
@@ -87,9 +95,14 @@ pub struct PlayerState {
 
     last_move: Rc<Cell<Instant>>,
     last_pos: Rc<Cell<(f32, f32)>>,
+    view_size: Rc<Cell<(f32, f32)>>,
+    dragging_subtitle: Rc<Cell<bool>>,
     /// Monotonic token used to discard async `ffprobe` results from superseded track loads.
     pub load_token: Rc<AtomicU64>,
     pending_restart: Rc<Cell<Option<u64>>>,
+    force_play: Rc<Cell<bool>>,
+    pending_seek: Rc<Cell<Option<f64>>>,
+    last_video_frame: Rc<Cell<Instant>>,
     pub rng: Rc<Cell<u64>>,
 }
 
@@ -125,7 +138,9 @@ impl PlayerState {
             shuffle: Signal::new(playback.shuffle),
             queue_open: Signal::new(false),
             subtitles_open: Signal::new(false),
+            audio_open: Signal::new(false),
             subtitle: Signal::new(None),
+            subtitle_style: Signal::new(SubtitleStyle::default()),
             frame: Signal::new(None),
             cover: Signal::new(None),
             backdrop: Signal::new(None),
@@ -136,6 +151,7 @@ impl PlayerState {
             media_session: Rc::new(RefCell::new(None)),
             queue_scroll: ScrollController::new(0.0),
             subtitles_scroll: ScrollController::new(0.0),
+            audio_scroll: ScrollController::new(0.0),
             config: Signal::new(config),
             chrome_progress: Signal::new(1.0),
             chrome_animating: Rc::new(Cell::new(false)),
@@ -145,8 +161,13 @@ impl PlayerState {
             controls_visible: Signal::new(true),
             last_move: Rc::new(Cell::new(Instant::now())),
             last_pos: Rc::new(Cell::new((0.0, 0.0))),
+            view_size: Rc::new(Cell::new((960.0, 640.0))),
+            dragging_subtitle: Rc::new(Cell::new(false)),
             load_token: Rc::new(AtomicU64::new(0)),
             pending_restart: Rc::new(Cell::new(None)),
+            force_play: Rc::new(Cell::new(false)),
+            pending_seek: Rc::new(Cell::new(None)),
+            last_video_frame: Rc::new(Cell::new(Instant::now() - Duration::from_secs(1))),
             rng: Rc::new(Cell::new(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -169,8 +190,37 @@ impl PlayerState {
             return;
         }
         self.last_pos.set(pos);
+        if self.dragging_subtitle.get() {
+            self.move_subtitle_pointer(pos);
+        }
         self.last_move.set(Instant::now());
         self.set_chrome(true);
+    }
+
+    pub fn set_view_size(&self, width: f32, height: f32) {
+        self.view_size.set((width, height));
+    }
+
+    pub fn start_subtitle_drag(&self) {
+        self.dragging_subtitle.set(true);
+    }
+
+    pub fn move_subtitle_pointer(&self, pos: (f32, f32)) {
+        if !self.dragging_subtitle.get() {
+            return;
+        }
+        let (width, height) = self.view_size.get();
+        let mut style = self.subtitle_style.peek();
+        style.x = (pos.0 / width.max(1.0)).clamp(0.05, 0.95);
+        style.y = (pos.1 / height.max(1.0)).clamp(0.08, 0.92);
+        style.customized = true;
+        self.subtitle_style.set_if_changed(style);
+    }
+
+    pub fn finish_subtitle_drag(&self) {
+        if self.dragging_subtitle.replace(false) {
+            self.commit_subtitle_style();
+        }
     }
 
     fn set_chrome(&self, visible: bool) {
@@ -277,6 +327,7 @@ impl PlayerState {
             || self.scrub.peek().is_some()
             || self.queue_open.get()
             || self.subtitles_open.get()
+            || self.audio_open.get()
         {
             return true;
         }
@@ -306,6 +357,40 @@ impl PlayerState {
         if self.current.get().is_none() {
             self.play_index(start);
         }
+    }
+
+    pub fn play_now(&self, paths: Vec<PathBuf>) {
+        let paths = crate::cli::collect_media(paths);
+        if paths.is_empty() {
+            return;
+        }
+        self.queue
+            .set(paths.into_iter().map(Self::queue_item).collect());
+        self.play_index(0);
+        self.force_play.set(true);
+    }
+
+    fn queue_item(path: PathBuf) -> QueueItem {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        QueueItem { path, name }
+    }
+
+    pub fn enqueue_next(&self, paths: Vec<PathBuf>) {
+        let paths = crate::cli::collect_media(paths);
+        if paths.is_empty() {
+            return;
+        }
+        let mut queue = self.queue.get();
+        insert_next(
+            &mut queue,
+            self.current.get(),
+            paths.into_iter().map(Self::queue_item).collect(),
+        );
+        self.queue.set(queue);
     }
 
     pub fn drop_files(&self, paths: Vec<PathBuf>) {
@@ -387,6 +472,7 @@ impl PlayerState {
         session: engine::PreparedSession,
     ) {
         self.pending_restart.set(None);
+        self.pending_seek.set(None);
         let art = cover.map(|art| art.into_images());
         self.set_media_accent(art.as_ref().and_then(|art| art.accent));
         *self.cover_art.borrow_mut() = art.as_ref().map(|art| art.encoded.clone());
@@ -394,7 +480,7 @@ impl PlayerState {
         let (cover, backdrop) = art.map(|art| (art.cover, art.backdrop)).unwrap_or_default();
         self.cover.set(cover);
         self.backdrop.set(backdrop);
-        let autoplay = self.config.peek().playback.autoplay;
+        let autoplay = self.force_play.replace(false) || self.config.peek().playback.autoplay;
         self.engine.activate(session, Some(!autoplay));
         self.duration.set(info.duration);
         self.position.set(0.0);
@@ -406,9 +492,14 @@ impl PlayerState {
     fn stop_session(&self) {
         self.next_load_token();
         self.pending_restart.set(None);
+        self.force_play.set(false);
+        self.pending_seek.set(None);
         self.engine.stop();
         self.subtitle.set(None);
+        self.subtitle_style.set(SubtitleStyle::default());
+        self.dragging_subtitle.set(false);
         self.subtitles_open.set(false);
+        self.audio_open.set(false);
         self.frame.set(None);
         self.cover.set(None);
         self.backdrop.set(None);
@@ -459,6 +550,7 @@ impl PlayerState {
             self.announce_seek(pos);
             return;
         }
+        self.pending_seek.set(Some(pos));
         self.restart(media, pos, self.speed.peek());
         self.announce_seek(pos);
     }
@@ -470,7 +562,9 @@ impl PlayerState {
 
     fn current_position(&self) -> f64 {
         if self.pending_restart.get().is_some() {
-            self.position.peek()
+            self.pending_seek
+                .get()
+                .unwrap_or_else(|| self.engine.position())
         } else {
             self.engine.position()
         }
@@ -490,6 +584,7 @@ impl PlayerState {
                     return;
                 }
                 state.pending_restart.set(None);
+                state.pending_seek.set(None);
                 match result {
                     Ok(Some(session)) => {
                         state.engine.activate(session, None);
@@ -513,6 +608,55 @@ impl PlayerState {
         self.subtitle.set(subtitle.clone());
         self.subtitles_open.set(false);
         if !self.engine.set_subtitle(subtitle) {
+            if let Some(media) = self.media.peek() {
+                self.restart(media, self.current_position(), self.speed.peek());
+            }
+        }
+    }
+
+    pub fn select_audio(&self, index: usize) {
+        let Some(mut media) = self.media.peek() else {
+            return;
+        };
+        self.audio_open.set(false);
+        if media.audio_stream == Some(index)
+            || !media.audio_tracks.iter().any(|track| track.index == index)
+        {
+            return;
+        }
+        media.audio_stream = Some(index);
+        self.media.set(Some(media.clone()));
+        if !self.engine.set_audio_live(index) {
+            self.restart(media, self.current_position(), self.speed.peek());
+        }
+    }
+
+    pub fn set_subtitle_position(&self, x: f32, y: f32) {
+        let mut style = self.subtitle_style.peek();
+        style.x = x;
+        style.y = y;
+        style.customized = true;
+        self.subtitle_style.set(style);
+        self.commit_subtitle_style();
+    }
+
+    pub fn adjust_subtitle_outline(&self, delta: f32) {
+        let mut style = self.subtitle_style.peek();
+        style.outline = (style.outline + delta).clamp(0.0, 8.0);
+        style.customized = true;
+        self.subtitle_style.set(style);
+        self.commit_subtitle_style();
+    }
+
+    pub fn reset_subtitle_style(&self) {
+        self.subtitle_style.set(SubtitleStyle::default());
+        self.commit_subtitle_style();
+    }
+
+    fn commit_subtitle_style(&self) {
+        if !self.engine.set_subtitle_style(self.subtitle_style.peek())
+            && self.subtitle.peek().is_some()
+        {
             if let Some(media) = self.media.peek() {
                 self.restart(media, self.current_position(), self.speed.peek());
             }
@@ -703,7 +847,10 @@ impl PlayerState {
             },
             move |frame| {
                 if let Some((gen, f)) = frame {
-                    if gen == state.engine.generation() {
+                    if gen == state.engine.video_generation()
+                        && state.last_video_frame.get().elapsed() >= Duration::from_millis(40)
+                    {
+                        state.last_video_frame.set(Instant::now());
                         state.sample_video_accent(&f.pixels);
                         if let Ok(image) =
                             ImageData::from_premultiplied_rgba(f.width, f.height, f.pixels)
@@ -781,6 +928,14 @@ impl PlayerState {
     }
 
     pub fn open_dialog(&self) {
+        self.pick_media(true);
+    }
+
+    pub fn add_dialog(&self) {
+        self.pick_media(false);
+    }
+
+    fn pick_media(&self, play_now: bool) {
         let state = self.clone();
         self.app.spawn_background(
             || {
@@ -792,9 +947,37 @@ impl PlayerState {
             },
             move |picked| {
                 if let Some(paths) = picked {
-                    state.enqueue(paths);
+                    if play_now {
+                        state.play_now(paths);
+                    } else {
+                        state.enqueue_next(paths);
+                    }
                 }
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_next_inserts_after_current_without_replacing_other_items() {
+        let item = |name: &str| QueueItem {
+            name: name.to_string(),
+            path: PathBuf::from(name),
+        };
+        let mut queue = vec![item("playing"), item("later")];
+        insert_next(&mut queue, Some(0), vec![item("first"), item("second")]);
+        assert_eq!(
+            queue
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            ["playing", "first", "second", "later"]
+        );
+        insert_next(&mut queue, None, vec![item("at end")]);
+        assert_eq!(queue.last().unwrap().name, "at end");
     }
 }

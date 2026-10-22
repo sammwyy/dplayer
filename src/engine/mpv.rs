@@ -1,5 +1,5 @@
 use super::decode::{EngineEvent, VideoFrame};
-use super::probe::SubtitleSource;
+use super::probe::{SubtitleSource, SubtitleStyle};
 use libloading::Library;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::Path;
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[repr(C)]
 struct RenderParam {
@@ -143,6 +143,8 @@ enum Control {
     Speed(f32),
     Volume(f32),
     Subtitle(Option<SubtitleSource>),
+    Audio(usize),
+    SubtitleStyle(SubtitleStyle),
 }
 
 pub(super) struct MpvPlayback {
@@ -158,11 +160,14 @@ pub struct MpvSession {
 }
 
 impl MpvSession {
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         path: &Path,
         dimensions: (u32, u32),
         playback: MpvPlayback,
         subtitle: Option<SubtitleSource>,
+        style: SubtitleStyle,
+        audio_stream: Option<usize>,
         events: Sender<EngineEvent>,
         video: SyncSender<(u64, VideoFrame)>,
         generation: u64,
@@ -191,7 +196,17 @@ impl MpvSession {
             let loaded = worker.load();
             let _ = ready_tx.send(loaded);
             if loaded {
-                worker.run(rx, clock, events, video, generation, playback.pos, subtitle);
+                worker.run(
+                    rx,
+                    clock,
+                    events,
+                    video,
+                    generation,
+                    playback.pos,
+                    subtitle,
+                    audio_stream,
+                    style,
+                );
             }
         });
         ready_rx.recv().ok().filter(|ready| *ready)?;
@@ -221,6 +236,14 @@ impl MpvSession {
 
     pub fn subtitle(&self, subtitle: Option<SubtitleSource>) {
         let _ = self.controls.send(Control::Subtitle(subtitle));
+    }
+
+    pub fn audio(&self, index: usize) {
+        let _ = self.controls.send(Control::Audio(index));
+    }
+
+    pub fn subtitle_style(&self, style: SubtitleStyle) {
+        let _ = self.controls.send(Control::SubtitleStyle(style));
     }
 }
 
@@ -340,52 +363,68 @@ impl Worker {
                     self.command(&[c"sub-add", &file, c"select"]);
                 }
             }
-            Some(SubtitleSource::Embedded { index, .. }) => {
-                let mut count = 0i64;
-                if unsafe {
-                    (self.api.get_property)(
-                        self.handle,
-                        c"track-list/count".as_ptr(),
-                        4,
-                        (&mut count as *mut i64).cast(),
-                    )
-                } < 0
-                {
-                    return;
-                }
-                for n in 0..count {
-                    let name = CString::new(format!("track-list/{n}/ff-index")).unwrap();
-                    let mut ff_index = -1i64;
-                    if unsafe {
-                        (self.api.get_property)(
-                            self.handle,
-                            name.as_ptr(),
-                            4,
-                            (&mut ff_index as *mut i64).cast(),
-                        )
-                    } < 0
-                        || ff_index != *index as i64
-                    {
-                        continue;
-                    }
-                    let name = CString::new(format!("track-list/{n}/id")).unwrap();
-                    let mut id = 0i64;
-                    if unsafe {
-                        (self.api.get_property)(
-                            self.handle,
-                            name.as_ptr(),
-                            4,
-                            (&mut id as *mut i64).cast(),
-                        )
-                    } >= 0
-                    {
-                        let id = CString::new(id.to_string()).unwrap();
-                        self.command(&[c"set", c"sid", &id]);
-                        break;
-                    }
-                }
+            Some(SubtitleSource::Embedded { index, .. }) => self.select_track(*index, c"sid"),
+        }
+    }
+
+    fn select_track(&self, index: usize, property: &CStr) {
+        let mut count = 0i64;
+        if unsafe {
+            (self.api.get_property)(
+                self.handle,
+                c"track-list/count".as_ptr(),
+                4,
+                (&mut count as *mut i64).cast(),
+            )
+        } < 0
+        {
+            return;
+        }
+        for n in 0..count {
+            let name = CString::new(format!("track-list/{n}/ff-index")).unwrap();
+            let mut ff_index = -1i64;
+            if unsafe {
+                (self.api.get_property)(
+                    self.handle,
+                    name.as_ptr(),
+                    4,
+                    (&mut ff_index as *mut i64).cast(),
+                )
+            } < 0
+                || ff_index != index as i64
+            {
+                continue;
+            }
+            let name = CString::new(format!("track-list/{n}/id")).unwrap();
+            let mut id = 0i64;
+            if unsafe {
+                (self.api.get_property)(self.handle, name.as_ptr(), 4, (&mut id as *mut i64).cast())
+            } >= 0
+            {
+                let id = CString::new(id.to_string()).unwrap();
+                self.command(&[c"set", property, &id]);
+                break;
             }
         }
+    }
+
+    fn set_subtitle_style(&self, style: SubtitleStyle) {
+        if !style.customized {
+            self.command(&[c"set", c"sub-ass-override", c"yes"]);
+            return;
+        }
+        self.command(&[c"set", c"sub-ass-override", c"strip"]);
+        let (align, margin) = if (style.x - 0.5).abs() < 0.03 {
+            (c"center", 0.0)
+        } else if style.x < 0.5 {
+            (c"left", style.x * self.dimensions.0 as f32)
+        } else {
+            (c"right", (1.0 - style.x) * self.dimensions.0 as f32)
+        };
+        self.command(&[c"set", c"sub-align-x", align]);
+        self.set_double(b"sub-margin-x\0", margin as f64);
+        self.set_double(b"sub-pos\0", (style.y * 100.0) as f64);
+        self.set_double(b"sub-border-size\0", style.outline as f64);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -398,8 +437,11 @@ impl Worker {
         generation: u64,
         start_pos: f64,
         mut subtitle: Option<SubtitleSource>,
+        mut audio_stream: Option<usize>,
+        mut style: SubtitleStyle,
     ) {
         let mut ticks = 0u32;
+        let mut last_render = Instant::now() - Duration::from_millis(50);
         let mut waiting_for_seek = start_pos > 0.0;
         let mut ended = false;
         loop {
@@ -408,8 +450,15 @@ impl Worker {
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
             };
-            let (mut pause, mut seek, mut speed, mut volume, mut selected) =
-                (None, None, None, None, None);
+            let (
+                mut pause,
+                mut seek,
+                mut speed,
+                mut volume,
+                mut selected,
+                mut audio,
+                mut subtitle_style,
+            ) = (None, None, None, None, None, None, None);
             for command in first.into_iter().chain(rx.try_iter().take(128)) {
                 match command {
                     Control::Pause(value) => pause = Some(value),
@@ -417,6 +466,8 @@ impl Worker {
                     Control::Speed(value) => speed = Some(value),
                     Control::Volume(value) => volume = Some(value),
                     Control::Subtitle(value) => selected = Some(value),
+                    Control::Audio(value) => audio = Some(value),
+                    Control::SubtitleStyle(value) => subtitle_style = Some(value),
                 }
             }
             if let Some(value) = speed {
@@ -437,6 +488,14 @@ impl Worker {
                 subtitle = value;
                 self.select_subtitle(subtitle.as_ref());
             }
+            if let Some(value) = audio {
+                audio_stream = Some(value);
+                self.select_track(value, c"aid");
+            }
+            if let Some(value) = subtitle_style {
+                style = value;
+                self.set_subtitle_style(style);
+            }
             loop {
                 let event = unsafe { (self.api.wait_event)(self.handle, 0.0) };
                 if event.is_null() {
@@ -451,6 +510,12 @@ impl Worker {
                 }
                 if event.kind == 8 {
                     self.select_subtitle(subtitle.as_ref());
+                    if let Some(index) = audio_stream {
+                        self.select_track(index, c"aid");
+                    }
+                    if style.customized {
+                        self.set_subtitle_style(style);
+                    }
                 }
                 if event.kind == 21 {
                     waiting_for_seek = false;
@@ -508,7 +573,11 @@ impl Worker {
                     }
                 }
             }
-            if !self.render.is_null() && unsafe { (self.api.render_update)(self.render) } & 1 != 0 {
+            if !self.render.is_null()
+                && last_render.elapsed() >= Duration::from_millis(40)
+                && unsafe { (self.api.render_update)(self.render) } & 1 != 0
+            {
+                last_render = Instant::now();
                 self.render_frame(&video, generation);
             }
         }
@@ -618,6 +687,8 @@ mod tests {
                 paused: false,
                 volume: 0.0,
             },
+            None,
+            SubtitleStyle::default(),
             None,
             events,
             video,

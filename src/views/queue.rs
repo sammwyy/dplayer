@@ -79,7 +79,7 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
     let t = use_theme();
     let queue = p.queue.get();
     // Leave room for the bottom transport card when media is loaded.
-    let bottom = if p.media.get().is_some() { 100.0 } else { 12.0 };
+    let bottom = if p.media.get().is_some() { 145.0 } else { 12.0 };
     let mut rows: Vec<BoxedWidget> = Vec::with_capacity(queue.len() + 1);
     for index in 0..queue.len() {
         if let Some(item) = row_item(p, index) {
@@ -147,7 +147,7 @@ pub fn build(p: &PlayerState) -> BoxedWidget {
                         13.0,
                         false,
                     ),
-                    icon_button_sized(p, "plus", 26.0, 15.0, false, move || add.open_dialog()),
+                    icon_button_sized(p, "plus", 26.0, 15.0, false, move || add.add_dialog()),
                 ],
             ),
             Box::new(

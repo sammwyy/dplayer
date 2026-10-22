@@ -53,6 +53,10 @@ impl Icons {
                 r#"<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M5 13h6M5 16h4M14 13h5M13 16h6"/>"#,
             ),
             (
+                "audio-track",
+                r#"<path d="M4 9v6h4l6 4.5v-15L8 9H4Z"/><path d="M17 7a7 7 0 0 1 0 10M20 4a11 11 0 0 1 0 16"/>"#,
+            ),
+            (
                 "open",
                 r#"<path d="M3 8V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2"/><path d="M3 8h18l-2 11a2 2 0 0 1-2 1.6H7A2 2 0 0 1 5 19L3 8Z"/>"#,
             ),

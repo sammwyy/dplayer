@@ -1,11 +1,12 @@
 //! Subprocess decoder running `ffmpeg` with two raw output streams: RGBA8 video
 //! frames and interleaved `f32le` stereo PCM, paced at the input clock via `-readrate`.
 
-use super::probe::SubtitleSource;
+use super::probe::{SubtitleSource, SubtitleStyle};
 use crate::backends::{self, ProcessControl, SpawnedDecoder};
 use std::io::Read;
 use std::sync::mpsc::{sync_channel, Receiver, Sender, SyncSender};
 use std::thread;
+use std::time::Duration;
 
 pub const AUDIO_RATE: u32 = 48_000;
 pub const AUDIO_CHANNELS: u32 = 2;
@@ -44,6 +45,7 @@ pub enum EngineEvent {
 pub struct DecodeSession {
     control: ProcessControl,
     pub audio_rx: Option<Receiver<Vec<u8>>>,
+    primed: bool,
     _waiter: thread::JoinHandle<()>,
 }
 
@@ -59,6 +61,7 @@ fn ffmpeg_args(
     video_dest: Option<&str>,
     audio_dest: Option<&str>,
     subtitle: Option<&SubtitleSource>,
+    style: SubtitleStyle,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-hide_banner".into(),
@@ -81,7 +84,7 @@ fn ffmpeg_args(
     if let (Some(index), Some(video_dest)) = (video_stream, video_dest) {
         let mut filters = format!(
             "fps={:.4},scale={out_w}:{out_h},setsar=1",
-            30.0 / speed.max(1.0)
+            24.0 / speed.max(1.0)
         );
         if let Some(subtitle) = subtitle {
             let (file, ordinal) = match subtitle {
@@ -104,6 +107,39 @@ fn ffmpeg_args(
             filters.push_str(&format!(",subtitles=filename={filename}"));
             if let Some(ordinal) = ordinal {
                 filters.push_str(&format!(":si={ordinal}"));
+            }
+            if style.customized {
+                let horizontal = if (style.x - 0.5).abs() < 0.03 {
+                    2
+                } else if style.x < 0.5 {
+                    1
+                } else {
+                    3
+                };
+                let alignment = horizontal + if style.y < 0.5 { 6 } else { 0 };
+                let margin_y = ((if style.y < 0.5 {
+                    style.y
+                } else {
+                    1.0 - style.y
+                }) * out_h as f32)
+                    .round() as u32;
+                let margin_x = (if horizontal == 1 {
+                    style.x
+                } else if horizontal == 3 {
+                    1.0 - style.x
+                } else {
+                    0.0
+                } * out_w as f32)
+                    .round() as u32;
+                let margin = if horizontal == 3 {
+                    "MarginR"
+                } else {
+                    "MarginL"
+                };
+                filters.push_str(&format!(
+                    ":force_style=Alignment={alignment}\\,{margin}={margin_x}\\,MarginV={margin_y}\\,Outline={:.1}",
+                    style.outline
+                ));
             }
             if pos > 0.05 {
                 filters.push_str(&format!(",setpts=PTS-{pos:.3}/TB"));
@@ -162,6 +198,7 @@ impl DecodeSession {
         out_w: u32,
         out_h: u32,
         subtitle: Option<&SubtitleSource>,
+        style: SubtitleStyle,
         events_tx: Sender<EngineEvent>,
         video_tx: SyncSender<(u64, VideoFrame)>,
         generation: u64,
@@ -186,6 +223,7 @@ impl DecodeSession {
                     video_stream.map(|_| video_dest),
                     audio_stream.map(|_| audio_dest),
                     subtitle,
+                    style,
                 )
             },
         )?;
@@ -203,13 +241,19 @@ impl DecodeSession {
             let _ = events_tx.send(EngineEvent::Exited(generation, code, tail));
         });
 
+        let (ready_tx, ready_rx) = sync_channel(1);
         if let Some(mut pipe) = video_reader {
             let frame_len = (out_w as usize * out_h as usize * 4).max(1);
             thread::spawn(move || {
                 let mut pixels = vec![0u8; frame_len];
+                let mut first = true;
                 loop {
                     match pipe.read_exact(&mut pixels) {
                         Ok(()) => {
+                            if first {
+                                let _ = ready_tx.send(());
+                                first = false;
+                            }
                             let frame = VideoFrame {
                                 width: out_w,
                                 height: out_h,
@@ -232,18 +276,38 @@ impl DecodeSession {
         }
 
         let audio_rx = if let Some(pipe) = audio_reader {
-            let (tx, rx) = sync_channel::<Vec<u8>>(8);
+            let (tx, rx) = sync_channel::<Vec<u8>>(64);
             thread::spawn(move || forward_audio(pipe, tx));
             Some(rx)
         } else {
             None
         };
+        let primed = video_stream.is_some();
+        if primed {
+            if ready_rx.recv_timeout(Duration::from_secs(20)).is_err() {
+                control.kill();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "ffmpeg produced no video frame",
+                ));
+            }
+            control.suspend();
+        }
 
         Ok(DecodeSession {
             control,
             audio_rx,
+            primed,
             _waiter: waiter,
         })
+    }
+
+    pub fn activate(&self, paused: bool) {
+        if paused && !self.primed {
+            self.suspend();
+        } else if !paused && self.primed {
+            self.resume();
+        }
     }
 
     pub fn suspend(&self) {
@@ -302,6 +366,7 @@ mod tests {
             Some("pipe:3"),
             Some("pipe:4"),
             None,
+            SubtitleStyle::default(),
         );
         let maps: Vec<_> = args
             .windows(2)
@@ -320,10 +385,11 @@ mod tests {
             Some("pipe:3"),
             Some("pipe:4"),
             None,
+            SubtitleStyle::default(),
         );
         assert!(fast
             .windows(2)
-            .any(|pair| pair[0] == "-vf" && pair[1].starts_with("fps=15.0000,scale=")));
+            .any(|pair| pair[0] == "-vf" && pair[1].starts_with("fps=12.0000,scale=")));
     }
 
     #[test]
@@ -341,6 +407,7 @@ mod tests {
                 Some("pipe:3"),
                 None,
                 Some(subtitle),
+                SubtitleStyle::default(),
             );
             args.windows(2).find(|pair| pair[0] == "-vf").unwrap()[1].clone()
         };
@@ -351,5 +418,26 @@ mod tests {
         .ends_with("subtitles=filename=movie.mkv:si=1"));
         assert!(filter(&SubtitleSource::External("movie.ass".into()))
             .ends_with("subtitles=filename=movie.ass"));
+        let style = SubtitleStyle {
+            x: 0.25,
+            y: 0.15,
+            outline: 4.0,
+            customized: true,
+        };
+        let args = ffmpeg_args(
+            path,
+            0.0,
+            1.0,
+            Some(0),
+            None,
+            320,
+            180,
+            Some("pipe:3"),
+            None,
+            Some(&SubtitleSource::External("movie.ass".into())),
+            style,
+        );
+        let filter = &args.windows(2).find(|pair| pair[0] == "-vf").unwrap()[1];
+        assert!(filter.contains("Alignment=7\\,MarginL=80\\,MarginV=27\\,Outline=4.0"));
     }
 }

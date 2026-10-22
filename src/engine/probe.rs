@@ -8,9 +8,34 @@ pub enum SubtitleSource {
     External(PathBuf),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SubtitleStyle {
+    pub x: f32,
+    pub y: f32,
+    pub outline: f32,
+    pub customized: bool,
+}
+
+impl Default for SubtitleStyle {
+    fn default() -> Self {
+        Self {
+            x: 0.5,
+            y: 0.88,
+            outline: 2.0,
+            customized: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SubtitleTrack {
     pub source: SubtitleSource,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AudioTrack {
+    pub index: usize,
     pub label: String,
 }
 
@@ -58,6 +83,7 @@ pub struct MediaInfo {
     pub has_audio: bool,
     pub video_stream: Option<usize>,
     pub audio_stream: Option<usize>,
+    pub audio_tracks: Vec<AudioTrack>,
     pub subtitles: Vec<SubtitleTrack>,
     /// True if the file contains an attached picture stream (embedded cover art).
     pub attached_picture: bool,
@@ -72,7 +98,7 @@ impl MediaInfo {
         if self.width == 0 || self.height == 0 {
             return (0, 0);
         }
-        let scale = (1600.0 / self.width.max(self.height) as f64).min(1.0);
+        let scale = (1280.0 / self.width.max(self.height) as f64).min(1.0);
         let even = |dimension: u32| ((dimension as f64 * scale / 2.0).round() as u32 * 2).max(2);
         (even(self.width), even(self.height))
     }
@@ -163,6 +189,27 @@ fn embedded_subtitles(streams: &[Stream]) -> Vec<SubtitleTrack> {
     subtitles
 }
 
+fn audio_tracks(streams: &[Stream]) -> Vec<AudioTrack> {
+    streams
+        .iter()
+        .filter(|stream| stream.codec_type.as_deref() == Some("audio"))
+        .map(|stream| AudioTrack {
+            index: stream.index,
+            label: format!(
+                "{} · {} {} (track {})",
+                tag(&stream.tags, "language").unwrap_or("Unknown"),
+                stream
+                    .codec_name
+                    .as_deref()
+                    .unwrap_or("audio")
+                    .to_uppercase(),
+                tag(&stream.tags, "title").unwrap_or(""),
+                stream.index + 1
+            ),
+        })
+        .collect()
+}
+
 pub fn probe(path: &Path) -> Result<MediaInfo, String> {
     let output = crate::backends::background_command("ffprobe")
         .args([
@@ -198,6 +245,7 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         .streams
         .iter()
         .find(|s| s.codec_type.as_deref() == Some("audio"));
+    let audio_tracks = audio_tracks(&probe.streams);
     let mut subtitles = embedded_subtitles(&probe.streams);
     if video.is_some() {
         subtitles.extend(external_subtitles(path));
@@ -253,6 +301,7 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         has_audio: audio.is_some(),
         video_stream: video.map(|s| s.index),
         audio_stream: audio.map(|s| s.index),
+        audio_tracks,
         subtitles,
         attached_picture: picture.is_some(),
         width,
@@ -263,6 +312,24 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identifies_each_audio_stream_for_track_selection() {
+        let probe: Probe = serde_json::from_str(
+            r#"{"streams":[
+                {"index":0,"codec_type":"video"},
+                {"index":1,"codec_type":"audio","codec_name":"aac","tags":{"language":"spa"}},
+                {"index":2,"codec_type":"subtitle"},
+                {"index":4,"codec_type":"audio","codec_name":"ac3","tags":{"language":"eng","title":"Surround"}}
+            ]}"#
+        ).unwrap();
+        let tracks = audio_tracks(&probe.streams);
+        assert_eq!(
+            tracks.iter().map(|track| track.index).collect::<Vec<_>>(),
+            [1, 4]
+        );
+        assert!(tracks[1].label.contains("Surround"));
+    }
 
     #[test]
     fn embedded_tracks_preserve_stream_index_and_subtitle_ordinal() {
@@ -327,13 +394,14 @@ mod tests {
             has_audio: false,
             video_stream: Some(0),
             audio_stream: None,
+            audio_tracks: vec![],
             subtitles: vec![],
             attached_picture: false,
             width: 3840,
             height: 2160,
         };
-        assert_eq!(info.output_size(), (1600, 900));
+        assert_eq!(info.output_size(), (1280, 720));
         std::mem::swap(&mut info.width, &mut info.height);
-        assert_eq!(info.output_size(), (900, 1600));
+        assert_eq!(info.output_size(), (720, 1280));
     }
 }

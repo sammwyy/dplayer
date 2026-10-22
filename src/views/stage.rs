@@ -7,25 +7,19 @@ use creamui_core::Size;
 use creamui_image::Image;
 use creamui_widgets::RawSpinner;
 
-fn click_catch(p: &PlayerState, child: BoxedWidget) -> BoxedWidget {
-    let p = p.clone();
+fn stage_content(child: BoxedWidget) -> BoxedWidget {
     Box::new(
-        RawButton::new(
-            Style {
-                flex_grow: 1.0,
-                flex_basis: Dimension::Length(0.0),
-                min_size: creamui_core::layout::Size {
-                    width: Dimension::Length(0.0),
-                    height: Dimension::Length(0.0),
-                },
-                justify_content: Some(JustifyContent::Center),
-                align_items: Some(AlignItems::Center),
-                ..Default::default()
+        RawView::new(Style {
+            flex_grow: 1.0,
+            flex_basis: Dimension::Length(0.0),
+            min_size: creamui_core::layout::Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
             },
-            move || p.toggle(),
-        )
-        .keyboard_focus(false)
-        .background(CLEAR)
+            justify_content: Some(JustifyContent::Center),
+            align_items: Some(AlignItems::Center),
+            ..Default::default()
+        })
         .child(child),
     )
 }
@@ -110,6 +104,7 @@ fn pill_button(
 fn welcome(p: &PlayerState) -> BoxedWidget {
     let t = use_theme();
     let open = p.clone();
+    let add = p.clone();
     let tile = Box::new(
         RawView::new(Style {
             justify_content: Some(JustifyContent::Center),
@@ -147,6 +142,7 @@ fn welcome(p: &PlayerState) -> BoxedWidget {
                 row(10.0),
                 vec![
                     pill_button(p, "open", "Open files", true, move || open.open_dialog()),
+                    pill_button(p, "plus", "Add to queue", false, move || add.add_dialog()),
                     pill_button(p, "settings", "Settings", false, crate::app::open_settings),
                 ],
             ),
@@ -436,9 +432,9 @@ pub fn build(p: &PlayerState, size: Size) -> BoxedWidget {
                     }
                     None => view(row(0.0), vec![]),
                 };
-                click_catch(p, image)
+                stage_content(image)
             }
-            Some(_) => click_catch(p, audio_stage(p, size)),
+            Some(_) => stage_content(audio_stage(p, size)),
             None => {
                 dark = false;
                 welcome(p)
