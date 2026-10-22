@@ -5,6 +5,7 @@
 
 use creamui_image::ImageData;
 use creamui_theme::Color;
+use std::sync::Arc;
 
 const BACKDROP_SIDE: u32 = 36;
 const BLUR_RADIUS: i32 = 3;
@@ -18,12 +19,15 @@ pub struct Artwork {
     pixels: Vec<u8>,
     backdrop: (u32, u32, Vec<u8>),
     accent: Option<Color>,
+    encoded: Arc<[u8]>,
 }
 
 pub struct ArtworkImages {
     pub cover: Option<ImageData>,
     pub backdrop: Option<ImageData>,
     pub accent: Option<Color>,
+    /// The original encoded image, for platform media controls.
+    pub encoded: Arc<[u8]>,
 }
 
 impl Artwork {
@@ -33,6 +37,7 @@ impl Artwork {
             cover: ImageData::from_premultiplied_rgba(self.width, self.height, self.pixels).ok(),
             backdrop: ImageData::from_premultiplied_rgba(bw, bh, backdrop).ok(),
             accent: self.accent,
+            encoded: self.encoded,
         }
     }
 }
@@ -49,6 +54,7 @@ pub fn decode(bytes: &[u8]) -> Option<Artwork> {
         pixels,
         backdrop,
         accent,
+        encoded: bytes.into(),
     })
 }
 

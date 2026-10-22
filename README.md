@@ -14,15 +14,24 @@ A native video and music player for Linux, built on
 - Queue panel with add / remove / click-to-play.
 - Music view with the embedded cover art, title and "Album - Artist" over a
   blurred backdrop of the artwork.
-- Translucent blurred window, hybrid window decorations, and live system-theme
-  reload.
+- Titlebar built on CreamUI's `AppTitlebar`: settings button, the video title
+  in the center, and window controls drawn by the compositor (hybrid) or by
+  the app as a fallback. Everything mirrors when the controls sit on the left.
+- Automatic accent color taken from the cover art or the video picture.
+- Desktop media controls: MPRIS 2 on Linux (shell media widgets, media keys,
+  `playerctl`) and System Media Transport Controls on Windows (media flyout,
+  lock screen, hardware keys). Title, artist, album, cover art and timeline
+  are published; play/pause, stop, next/previous, seeking, volume, rate,
+  shuffle and repeat can be driven from outside.
+- Translucent blurred window and live system-theme reload.
 - Keyboard-first: `space` play/pause · `←` `→` seek 5 s (`shift` = 30 s) ·
   `↑` `↓` volume · `f` maximize · `m` mute · `[` `]` speed ·
   `n`/`p` next/previous · `l` repeat · `s` shuffle · `t` queue ·
   `o` open · `,` settings · `q`/`Esc` quit.
 - Settings window (`dplayer --settings`, or the gear in the top-left corner):
   startup volume / speed / repeat / shuffle, autoplay, seek steps, controls
-  auto-hide delay, animations, bar width and style, accent color, music
+  auto-hide delay, animations, bar width and style, accent color (automatic,
+  system or a preset), music
   background and cover shape. Stored in `~/.config/dplayer/config.toml` and
   applied live to open players.
 
@@ -64,11 +73,11 @@ install -Dm644 data/dplayer.desktop /usr/share/applications/dplayer.desktop
 ```
 
 Runtime requirements: `ffmpeg`, `ffprobe`, and a working audio output
-(ALSA/PipeWire/PulseAudio via `rodio`).
+(ALSA/PipeWire/PulseAudio via `rodio`). Linux builds link `libdbus-1` for
+MPRIS (`dbus-devel` / `libdbus-1-dev` at build time).
 
 ## Roadmap
 
-- MPRIS media-keys integration (D-Bus)
 - Drag & drop onto the window
 - Subtitle and audio track selection
 - Embedded picture display while seeking

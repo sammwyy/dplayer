@@ -28,6 +28,7 @@ pub fn run(paths: Vec<PathBuf>) {
             let window = state.window.clone();
             let keys = state.clone();
             let pumps = state.clone();
+            let controls = state.clone();
             state.enqueue(paths.clone());
             app.append_window(
                 options.clone(),
@@ -51,6 +52,7 @@ pub fn run(paths: Vec<PathBuf>) {
                         pressed
                     });
                     *window.borrow_mut() = Some(handle);
+                    controls.start_media_controls();
                 },
                 move |size| crate::views::build(&state, size),
             );

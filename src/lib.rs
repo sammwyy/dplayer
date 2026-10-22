@@ -7,6 +7,7 @@ mod components;
 pub mod config;
 mod engine;
 mod icons;
+mod media_controls;
 mod settings;
 mod shortcuts;
 mod state;

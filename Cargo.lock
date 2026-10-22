@@ -772,6 +772,7 @@ dependencies = [
  "creamui-theme-loader",
  "creamui-theme-watch",
  "creamui-widgets",
+ "dbus",
  "delib",
  "libc",
  "rfd",
@@ -779,6 +780,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "windows 0.52.0",
 ]
 
 [[package]]

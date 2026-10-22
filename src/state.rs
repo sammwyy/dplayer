@@ -68,6 +68,11 @@ pub struct PlayerState {
     /// Accent picked from the cover art or the video, for `Accent::Auto`.
     media_accent: Rc<Cell<Option<Color>>>,
     video_frames: Rc<Cell<u32>>,
+    /// Encoded cover art of the current item, shared with media controls.
+    pub(crate) cover_art: Rc<RefCell<Option<std::sync::Arc<[u8]>>>>,
+    /// Increments for every item that starts, so media controls see repeats.
+    pub(crate) track_serial: Rc<Cell<u64>>,
+    pub(crate) media_session: Rc<RefCell<Option<crate::backends::MediaSession>>>,
     pub queue_scroll: ScrollController,
     pub config: Signal<Config>,
     /// Chrome slide progress: 0.0 fully hidden, 1.0 fully shown.
@@ -119,6 +124,9 @@ impl PlayerState {
             backdrop: Signal::new(None),
             media_accent: Rc::new(Cell::new(None)),
             video_frames: Rc::new(Cell::new(0)),
+            cover_art: Rc::new(RefCell::new(None)),
+            track_serial: Rc::new(Cell::new(0)),
+            media_session: Rc::new(RefCell::new(None)),
             queue_scroll: ScrollController::new(0.0),
             config: Signal::new(config),
             chrome_progress: Signal::new(1.0),
@@ -330,6 +338,8 @@ impl PlayerState {
     fn start_media(&self, info: MediaInfo, cover: Option<crate::artwork::Artwork>) {
         let art = cover.map(|art| art.into_images());
         self.set_media_accent(art.as_ref().and_then(|art| art.accent));
+        *self.cover_art.borrow_mut() = art.as_ref().map(|art| art.encoded.clone());
+        self.track_serial.set(self.track_serial.get() + 1);
         let (cover, backdrop) = art.map(|art| (art.cover, art.backdrop)).unwrap_or_default();
         self.cover.set(cover);
         self.backdrop.set(backdrop);
@@ -356,6 +366,7 @@ impl PlayerState {
         self.frame.set(None);
         self.cover.set(None);
         self.backdrop.set(None);
+        *self.cover_art.borrow_mut() = None;
         self.video_frames.set(0);
         self.position.set(0.0);
         self.duration.set(0.0);
@@ -393,6 +404,7 @@ impl PlayerState {
         self.position.set(pos);
         self.engine.seek(&media, pos);
         self.sync_pause_flag();
+        self.announce_seek(pos);
     }
 
     pub fn seek_by(&self, delta: f64) {
@@ -447,9 +459,14 @@ impl PlayerState {
                 .map(|i| speeds[i])
                 .unwrap_or(*speeds.last().unwrap())
         };
-        self.speed.set(next);
+        self.set_speed(next);
+    }
+
+    pub fn set_speed(&self, speed: f32) {
+        let speed = speed.clamp(SPEEDS[0], SPEEDS[SPEEDS.len() - 1]);
+        self.speed.set(speed);
         if let Some(media) = self.media.get() {
-            self.engine.set_speed(&media, next);
+            self.engine.set_speed(&media, speed);
             self.sync_pause_flag();
         }
     }
@@ -604,6 +621,7 @@ impl PlayerState {
         }
 
         self.set_chrome(self.chrome_visible());
+        self.publish_media();
         if self.status.get() != Status::Playing {
             return;
         }

@@ -17,6 +17,30 @@ register_os_backend! {
     #[cfg(windows)] windows,
 }
 
+pub mod media;
+#[cfg(target_os = "linux")]
+mod mpris;
+#[cfg(windows)]
+mod smtc;
+
+#[cfg(target_os = "linux")]
+pub use mpris::MediaSession;
+#[cfg(windows)]
+pub use smtc::MediaSession;
+
+/// Platforms without a media control integration accept updates silently.
+#[cfg(not(any(target_os = "linux", windows)))]
+pub struct MediaSession;
+
+#[cfg(not(any(target_os = "linux", windows)))]
+impl MediaSession {
+    pub fn new(_: std::sync::mpsc::Sender<media::MediaCommand>) -> Option<Self> {
+        None
+    }
+    pub fn update(&self, _: &media::MediaSnapshot) {}
+    pub fn seeked(&self, _: f64) {}
+}
+
 pub struct SpawnedDecoder {
     pub child: Child,
     pub control: ProcessControl,
